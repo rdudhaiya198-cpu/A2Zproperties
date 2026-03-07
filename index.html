@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- TODO: Set the document title to the name of your application -->
+    <title>A TO Z Properties</title>
+    <meta name="description" content="real estate rental brokering firm">
+    <meta name="author" content="Lovable" />
+
+    <!-- TODO: Update og:title to match your application name -->
+    
+    
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/770256c2-aebe-4067-a5e7-74371fa8090d/id-preview-6f24d4d4--8b5367f6-5b6d-495f-8e7f-06f3daa6064f.lovable.app-1771770740285.png">
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@Lovable" />
+    <meta name="twitter:image" content="https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/770256c2-aebe-4067-a5e7-74371fa8090d/id-preview-6f24d4d4--8b5367f6-5b6d-495f-8e7f-06f3daa6064f.lovable.app-1771770740285.png">
+    <meta property="og:title" content="A TO Z Properties">
+  <meta name="twitter:title" content="A TO Z Properties">
+  <meta property="og:description" content="real estate rental brokering firm">
+  <meta name="twitter:description" content="real estate rental brokering firm">
+    <!-- Favicon -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/favicon.svg">
+    <meta name="theme-color" content="#102a43">
+</head>
+
+  <body>
+    <div id="root"></div>
+    <script>
+      // Early error catcher that appends a non-intrusive overlay to body.
+      function showOverlay(message) {
+        try {
+          let overlay = document.getElementById('app-error-overlay');
+          if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'app-error-overlay';
+            overlay.style.position = 'fixed';
+            overlay.style.zIndex = '999999';
+            overlay.style.left = '12px';
+            overlay.style.top = '12px';
+            overlay.style.right = '12px';
+            overlay.style.background = '#fff6f6';
+            overlay.style.border = '1px solid #f5c2c7';
+            overlay.style.color = '#842029';
+            overlay.style.padding = '12px';
+            overlay.style.borderRadius = '6px';
+            overlay.style.boxShadow = '0 6px 18px rgba(0,0,0,0.08)';
+            overlay.style.fontFamily = 'system-ui, Arial, sans-serif';
+            overlay.style.whiteSpace = 'pre-wrap';
+            document.body.appendChild(overlay);
+          }
+          overlay.textContent = message;
+        } catch (err) {
+          /* ignore */
+        }
+      }
+
+      window.addEventListener('error', (e) => {
+        console.error('Early error', e.error || e.message);
+        showOverlay('Error: ' + String((e.error && e.error.message) || e.message));
+      });
+
+      window.addEventListener('unhandledrejection', (e) => {
+        console.error('Unhandled rejection', e.reason);
+        showOverlay('Unhandled rejection: ' + String(e.reason));
+      });
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

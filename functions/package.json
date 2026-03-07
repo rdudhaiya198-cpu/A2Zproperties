@@ -1,0 +1,25 @@
+{
+  "name": "atoz-properties-functions",
+  "version": "0.0.0",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "dev": "npx ts-node src/index.ts",
+    "seed": "node scripts/seedFirebase.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "firebase-admin": "^11.10.1",
+    "cors": "^2.8.5",
+    "body-parser": "^1.20.2",
+    "stripe": "^12.12.0",
+    "cloudinary": "^1.34.0",
+    "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.1",
+    "typescript": "^5.8.3"
+  }
+}
