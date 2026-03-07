@@ -7,6 +7,7 @@ import path from 'path';
 import multer from 'multer';
 import { v2 as cloudinary } from 'cloudinary';
 import stream from 'stream';
+// import * as functions from 'firebase-functions';
 
 // Try to initialize firebase-admin. In production (Cloud Functions) Application Default
 // credentials will be used. For local testing you can set GOOGLE_APPLICATION_CREDENTIALS
@@ -108,10 +109,15 @@ app.post('/sendNotification', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// Only start a standalone HTTP server when this file is executed directly.
+// When deployed as a Firebase Cloud Function the module is `require`d by
+// the Functions runtime and should not call `app.listen`.
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
 
 // Cloudinary upload endpoint
 // Configure Cloudinary using environment variables:
@@ -239,3 +245,5 @@ app.post('/uploadBase64', async (req, res) => {
     return res.status(500).json({ ok: false, error: String(err) });
   }
 });
+
+// export const api = functions.https.onRequest(app);
