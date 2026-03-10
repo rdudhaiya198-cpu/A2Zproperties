@@ -8,7 +8,7 @@ function normalizeNumber(n?: string) {
 }
 
 export default function ContactMenu({ phone, children, className }: { phone?: string; children?: React.ReactNode; className?: string }) {
-  const num = normalizeNumber(phone || "");
+  const num = normalizeNumber(phone || "6353388626");
   const handleCall = () => {
     if (!num) return;
     window.location.href = `tel:${num}`;
