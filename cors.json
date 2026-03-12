@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["https://atozproperties.vercel.app", "http://localhost:3000", "http://127.0.0.1:3000"],
+    "method": ["GET", "POST", "PUT", "OPTIONS"],
+    "responseHeader": ["Content-Type", "Content-Length", "ETag", "x-goog-resumable"],
+    "maxAgeSeconds": 3600
+  }
+]
