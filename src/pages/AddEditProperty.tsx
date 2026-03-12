@@ -170,6 +170,21 @@ const AddEditProperty = () => {
           });
         }
 
+        // save image metadata to Firestore (client-side) so URL is persisted immediately
+        try {
+          if (db && uploadedUrl) {
+            await addDoc(collection(db, 'images'), {
+              url: uploadedUrl,
+              propertyId: id || null,
+              source: 'cloudinary',
+              createdAt: serverTimestamp(),
+              uploadedAtClient: new Date().toISOString(),
+            });
+          }
+        } catch (e) {
+          console.warn('Failed to persist image metadata to Firestore', e);
+        }
+
         // update form images
         setForm((prev) => {
           const imgs = Array.isArray(prev.images) ? [...prev.images] : [];
