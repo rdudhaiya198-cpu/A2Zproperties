@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { db, storage } from "@/integrations/firebase/client";
+import uploadImageToCloudinary from "@/lib/cloudinary";
 import { collection, addDoc, setDoc, doc as fsDoc, getDoc as fsGetDoc, serverTimestamp } from "firebase/firestore";
 import { ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
@@ -114,47 +115,60 @@ const AddEditProperty = () => {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         setUploadProgress(0);
-        // first try functions/Cloudinary
-        const inferredLocal = (typeof window !== 'undefined' && window.location && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
-          ? `${window.location.protocol}//${window.location.hostname}:3000`
-          : undefined;
-        const fnUrl = (import.meta.env.VITE_FUNCTIONS_URL || inferredLocal || "/api").replace(/\/$/, "");
-        const url = `${fnUrl}/uploadImage`;
-
-        const uploadedUrl = await new Promise<string>(async (resolve, reject) => {
-          try {
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', url);
-            xhr.onload = () => {
-              try {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                  const body = JSON.parse(xhr.responseText);
-                  const returned = body?.secure_url || body?.url || body?.image?.url || body?.image?.secure_url || body?.image?.secureUrl;
-                  if (returned) { resolve(returned); return; }
-                  return reject(new Error('Missing url in functions response'));
-                }
-                // non-2xx -> fallback to firebase
-                return reject(new Error(`Functions responded ${xhr.status}`));
-              } catch (e) { return reject(e); }
-            };
-            xhr.onerror = () => reject(new Error('Network error to functions endpoint'));
-            if (xhr.upload && typeof xhr.upload.addEventListener === 'function') {
-              xhr.upload.addEventListener('progress', (ev: ProgressEvent) => {
-                if (ev.lengthComputable) setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
-              });
-            }
-            const fd = new FormData(); fd.append('image', file, file.name);
-            xhr.send(fd);
-          } catch (e) { reject(e); }
-        }).catch(async () => {
-          // functions failed -> try firebase storage fallback
-          try {
-            const fb = await uploadToFirebase(file);
-            return fb;
-          } catch (e) {
-            throw e;
+        // try direct client-side Cloudinary unsigned upload first
+        let uploadedUrl: string | undefined;
+        try {
+          if (import.meta.env.VITE_CLOUDINARY_CLOUD_NAME && import.meta.env.VITE_CLOUDINARY_UNSIGNED_UPLOAD_PRESET) {
+            uploadedUrl = await uploadImageToCloudinary(file);
           }
-        });
+        } catch (e) {
+          console.warn('Client Cloudinary upload failed, will try server/fallback', e);
+          uploadedUrl = undefined;
+        }
+
+        if (!uploadedUrl) {
+          // functions endpoint (server-side Cloudinary) then Firebase fallback
+          const inferredLocal = (typeof window !== 'undefined' && window.location && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
+            ? `${window.location.protocol}//${window.location.hostname}:3000`
+            : undefined;
+          const fnUrl = (import.meta.env.VITE_FUNCTIONS_URL || inferredLocal || "/api").replace(/\/$/, "");
+          const url = `${fnUrl}/uploadImage`;
+
+          uploadedUrl = await new Promise<string>(async (resolve, reject) => {
+            try {
+              const xhr = new XMLHttpRequest();
+              xhr.open('POST', url);
+              xhr.onload = () => {
+                try {
+                  if (xhr.status >= 200 && xhr.status < 300) {
+                    const body = JSON.parse(xhr.responseText);
+                    const returned = body?.secure_url || body?.url || body?.image?.url || body?.image?.secure_url || body?.image?.secureUrl;
+                    if (returned) { resolve(returned); return; }
+                    return reject(new Error('Missing url in functions response'));
+                  }
+                  // non-2xx -> fallback to firebase
+                  return reject(new Error(`Functions responded ${xhr.status}`));
+                } catch (e) { return reject(e); }
+              };
+              xhr.onerror = () => reject(new Error('Network error to functions endpoint'));
+              if (xhr.upload && typeof xhr.upload.addEventListener === 'function') {
+                xhr.upload.addEventListener('progress', (ev: ProgressEvent) => {
+                  if (ev.lengthComputable) setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
+                });
+              }
+              const fd = new FormData(); fd.append('image', file, file.name);
+              xhr.send(fd);
+            } catch (e) { reject(e); }
+          }).catch(async () => {
+            // functions failed -> try firebase storage fallback
+            try {
+              const fb = await uploadToFirebase(file);
+              return fb;
+            } catch (e) {
+              throw e;
+            }
+          });
+        }
 
         // update form images
         setForm((prev) => {

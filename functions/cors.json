@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["https://atozproperties.vercel.app"],
+    "method": ["GET", "POST", "PUT"],
+    "responseHeader": ["Content-Type"],
+    "maxAgeSeconds": 3600
+  }
+]
