@@ -13,6 +13,7 @@ const Properties = () => {
   const [allProperties, setAllProperties] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [locationFilter, setLocationFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [matchMode, setMatchMode] = useState<"all" | "any">("all");
   const [loading, setLoading] = useState(true);
@@ -33,8 +34,25 @@ const Properties = () => {
     return () => unsub();
   }, []);
 
+  const locationOptions = useMemo(() => {
+    const uniq = new Set<string>();
+    allProperties.forEach((p) => {
+      const loc = (p?.location || "").toString().trim();
+      if (loc) uniq.add(loc);
+    });
+    return Array.from(uniq).sort((a, b) => a.localeCompare(b));
+  }, [allProperties]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const sortFeaturedFirst = (items: any[]) => {
+      return [...items].sort((a, b) => {
+        const aFeatured = Boolean(a?.is_featured ?? a?.isFeatured);
+        const bFeatured = Boolean(b?.is_featured ?? b?.isFeatured);
+        return Number(bFeatured) - Number(aFeatured);
+      });
+    };
+
     const matchSearch = (p: any) => {
       const title = (p.title || "").toString().toLowerCase();
       const loc = (p.location || "").toString().toLowerCase();
@@ -50,27 +68,38 @@ const Properties = () => {
       return true;
     };
 
+    const matchLocation = (p: any) => {
+      if (locationFilter === "all") return true;
+      const loc = (p.location || "").toString().trim().toLowerCase();
+      return loc === locationFilter.toLowerCase();
+    };
+
     const matchStatus = (p: any) => {
       if (statusFilter === "all") return true;
       const s = (p.status || "").toString().toLowerCase();
-      if (statusFilter === "sold") return s.includes("sold");
-      if (statusFilter === "rented") return s.includes("rent") || s.includes("rented");
-      if (statusFilter === "available") return !(s.includes("sold") || s.includes("rent") || s.includes("rented"));
+      const isSell = /sold|sell|sale/.test(s);
+      const isRent = /rent|rented|lease/.test(s);
+      if (statusFilter === "sell") return isSell;
+      if (statusFilter === "rent") return isRent;
+      if (statusFilter === "available") return !(isSell || isRent);
       return true;
     };
 
     if (matchMode === 'all') {
-      return allProperties.filter((p) => matchSearch(p) && matchType(p) && matchStatus(p));
+      const matched = allProperties.filter((p) => matchSearch(p) && matchType(p) && matchLocation(p) && matchStatus(p));
+      return sortFeaturedFirst(matched);
     }
 
     // any = OR: include if matches any active filter
-    return allProperties.filter((p) => {
+    const matched = allProperties.filter((p) => {
       const sMatch = q ? matchSearch(p) : false;
       const tMatch = typeFilter === 'all' ? false : matchType(p);
+      const lMatch = locationFilter === 'all' ? false : matchLocation(p);
       const stMatch = statusFilter === 'all' ? false : matchStatus(p);
-      return sMatch || tMatch || stMatch;
+      return sMatch || tMatch || lMatch || stMatch;
     });
-  }, [allProperties, search, typeFilter, statusFilter, matchMode]);
+    return sortFeaturedFirst(matched);
+  }, [allProperties, search, typeFilter, locationFilter, statusFilter, matchMode]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -97,13 +126,22 @@ const Properties = () => {
               <SelectItem value="land">Land/Plot</SelectItem>
             </SelectContent>
           </Select>
+          <Select value={locationFilter} onValueChange={setLocationFilter}>
+            <SelectTrigger className="w-full sm:w-48 font-body"><SelectValue placeholder="Location" /></SelectTrigger>
+            <SelectContent className="w-full sm:w-auto">
+              <SelectItem value="all">All Locations</SelectItem>
+              {locationOptions.map((loc) => (
+                <SelectItem key={loc} value={loc}>{loc}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-full sm:w-40 font-body"><SelectValue placeholder="Status" /></SelectTrigger>
             <SelectContent className="w-full sm:w-auto">
               <SelectItem value="all">All Status</SelectItem>
               <SelectItem value="available">Available</SelectItem>
-              <SelectItem value="sold">Sold</SelectItem>
-              <SelectItem value="rented">Rented</SelectItem>
+              <SelectItem value="sell">Sell</SelectItem>
+              <SelectItem value="rent">Rent</SelectItem>
             </SelectContent>
           </Select>
           <div className="flex items-center gap-2 ml-auto">

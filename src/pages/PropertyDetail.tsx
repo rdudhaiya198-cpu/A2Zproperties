@@ -22,6 +22,7 @@ import {
   VISIT_CHARGE, MAX_PROPERTIES_PER_VISIT, PHONE_NUMBER,
 } from "@/lib/data";
 import { motion } from "framer-motion";
+import { openBookingWhatsApp } from "@/lib/whatsapp";
 
 const PropertyDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -143,6 +144,24 @@ const PropertyDetail = () => {
         status: "pending",
         createdAt: serverTimestamp(),
       });
+
+      const propertyTitleMap = [property, ...allProperties].reduce((acc: Record<string, string>, p: any) => {
+        if (p?.id) acc[p.id] = p.title || p.id;
+        return acc;
+      }, {});
+      openBookingWhatsApp({
+        bookingId: bookingRef.id,
+        name,
+        phone,
+        date: format(selectedDate, "yyyy-MM-dd"),
+        slot: selectedSlot,
+        propertyTitles: selectedPropertyIds.map((pid) => propertyTitleMap[pid] || pid),
+        location: property?.location || property?.address,
+        charge: VISIT_CHARGE,
+        total: VISIT_CHARGE,
+        notes: message || undefined,
+      });
+
       toast({ title: "Visit Booked!", description: "We will confirm your visit shortly." });
       try {
         // create admin notification referencing the booking id

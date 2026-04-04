@@ -127,7 +127,7 @@ const Dashboard = () => {
           title: `Site Visit - ${booking.name}`,
           date: booking.visit_date,
           timeSlot: booking.time_slot,
-          description: `Customer: ${booking.name}\nPhone: ${booking.phone}\nEmail: ${booking.email || 'N/A'}\nProperties: ${booking.property_ids?.length || 0}`,
+          description: `Customer: ${booking.name}\nPhone: ${booking.phone}\nEmail: ${booking.email || 'N/A'}\nProperties: ${getBookedPropertyNames(booking.property_ids || [])}`,
           location: "Rajkot, Gujarat",
         });
         if (calUrl) {
@@ -174,6 +174,12 @@ const Dashboard = () => {
 
   const pendingBookings = bookings.filter(b => b.status === "pending").length;
   const newInquiries = inquiries.filter(i => i.status === "new").length;
+  const getBookedPropertyNames = (propertyIds: string[] = []) => {
+    if (!Array.isArray(propertyIds) || propertyIds.length === 0) return "No properties";
+    return propertyIds
+      .map((pid) => properties.find((p) => p.id === pid)?.title || pid)
+      .join(", ");
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -296,6 +302,9 @@ const Dashboard = () => {
                         <td className="p-3 text-card-foreground font-medium">
                           {b.name}
                           {b.email && <div className="text-xs text-muted-foreground">{b.email}</div>}
+                          <div className="md:hidden text-xs text-muted-foreground mt-1">
+                            Properties: {getBookedPropertyNames(b.property_ids || [])}
+                          </div>
                         </td>
                           <td className="p-3">
                             <ContactMenu phone={b.phone} className="inline-block">
@@ -304,7 +313,11 @@ const Dashboard = () => {
                         </td>
                         <td className="p-3 hidden md:table-cell">{b.visit_date}</td>
                         <td className="p-3 hidden md:table-cell">{b.time_slot}</td>
-                        <td className="p-3 hidden md:table-cell">{b.property_ids?.length || 0} properties</td>
+                        <td className="p-3 hidden md:table-cell">
+                          <div className="max-w-[320px] text-xs text-muted-foreground line-clamp-2">
+                            {getBookedPropertyNames(b.property_ids || [])}
+                          </div>
+                        </td>
                         <td className="p-3">
                           <Badge className={`${statusColors[b.status] || ""} font-body text-xs`}>{b.status}</Badge>
                         </td>
@@ -327,7 +340,7 @@ const Dashboard = () => {
                                     title: `Site Visit - ${b.name}`,
                                     date: b.visit_date,
                                     timeSlot: b.time_slot,
-                                    description: `Customer: ${b.name}\nPhone: ${b.phone}`,
+                                    description: `Customer: ${b.name}\nPhone: ${b.phone}\nProperties: ${getBookedPropertyNames(b.property_ids || [])}`,
                                     location: "Rajkot, Gujarat",
                                   });
                                   window.open(url, "_blank");

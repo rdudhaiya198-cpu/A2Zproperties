@@ -11,6 +11,7 @@ import { format } from "date-fns";
 import { Phone } from "lucide-react";
 import ContactMenu from "@/components/ContactMenu";
 import { Link } from "react-router-dom";
+import { openBookingWhatsApp } from "@/lib/whatsapp";
 
 interface Props {
   propertyId: string;
@@ -74,6 +75,19 @@ export default function PropertyModal({ propertyId, trigger }: Props) {
         status: "pending",
         createdAt: serverTimestamp(),
       });
+
+      openBookingWhatsApp({
+        bookingId: bkRef.id,
+        name,
+        phone,
+        date,
+        slot,
+        propertyTitles: [property?.title || propertyId],
+        location: property?.location || property?.address,
+        charge: VISIT_CHARGE,
+        total: VISIT_CHARGE,
+      });
+
       try {
         await addDoc(collection(db, "notifications"), {
           type: "booking",

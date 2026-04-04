@@ -9,12 +9,15 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { storage, db } from "@/integrations/firebase/client";
 import { doc as fsDoc, getDoc as fsGetDoc, addDoc, collection, serverTimestamp, getDocs as fsGetDocs, query as fsQuery, where as fsWhere } from "firebase/firestore";
-import { TIME_SLOTS_MORNING, TIME_SLOTS_EVENING, VISIT_CHARGE } from "@/lib/data";
+import { TIME_SLOTS_MORNING, TIME_SLOTS_EVENING, VISIT_CHARGE, MAX_PROPERTIES_PER_VISIT } from "@/lib/data";
+import { openBookingWhatsApp } from "@/lib/whatsapp";
 
 export default function BookSlot() {
   const [search] = useSearchParams();
   const propertyId = search.get("propertyId");
   const [property, setProperty] = useState<any | null>(null);
+  const [relatedProperties, setRelatedProperties] = useState<any[]>([]);
+  const [extraPropertyIds, setExtraPropertyIds] = useState<string[]>([]);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [date, setDate] = useState("");
@@ -27,6 +30,22 @@ export default function BookSlot() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const { user } = useAuth();
+
+  const normalizeIntent = (status: any) => {
+    const s = (status || "").toString().toLowerCase();
+    if (/rent|rented|lease/.test(s)) return "rent";
+    if (/sell|sold|sale/.test(s)) return "sell";
+    return "other";
+  };
+
+  const normalizeType = (type: any) => {
+    const t = (type || "").toString().toLowerCase();
+    if (/commercial|shop|office|retail/.test(t)) return "commercial";
+    if (/land|plot|site/.test(t)) return "land";
+    return "residential";
+  };
+
+  const selectedPropertyIds = propertyId ? [propertyId, ...extraPropertyIds] : [];
   const brokerage = property && (property.status === "For Rent" || (property.listed_by && String(property.status).toLowerCase().includes("rent"))) ? Number(property.price || 0) : 0;
 
   useEffect(() => {
@@ -36,12 +55,60 @@ export default function BookSlot() {
       try {
         const dref = fsDoc(db, "properties", propertyId);
         const snap = await fsGetDoc(dref);
-        if (snap.exists()) setProperty({ id: snap.id, ...snap.data() });
+        if (!snap.exists()) return;
+
+        const selected = { id: snap.id, ...snap.data() } as any;
+        setProperty(selected);
+
+        // load related properties so user can book multiple in one slot
+        const allSnap = await fsGetDocs(collection(db, "properties"));
+        const all: any[] = [];
+        allSnap.forEach((d) => all.push({ id: d.id, ...d.data() }));
+
+        const selectedIntent = normalizeIntent(selected.status);
+        const selectedType = normalizeType(selected.type);
+        const selectedLocation = (selected.location || "").toString().trim().toLowerCase();
+
+        const rankedBase = all
+          .filter((p) => p.id !== propertyId)
+          .map((p) => {
+            const sameLocation = (p.location || "").toString().trim().toLowerCase() === selectedLocation;
+            const sameIntent = normalizeIntent(p.status) === selectedIntent;
+            const sameType = normalizeType(p.type) === selectedType;
+            const relScore = (sameIntent ? 5 : 0) + (sameType ? 4 : 0) + (sameLocation ? 2 : 0);
+            return { ...p, _relScore: relScore, _sameIntent: sameIntent, _sameType: sameType };
+          });
+
+        const strictMatches = rankedBase.filter((p: any) => p._sameIntent && p._sameType);
+        const softMatches = rankedBase.filter((p: any) => p._sameIntent || p._sameType);
+        const pool = strictMatches.length > 0 ? strictMatches : (softMatches.length > 0 ? softMatches : rankedBase);
+
+        const ranked = pool
+          .sort((a: any, b: any) => b._relScore - a._relScore)
+          .slice(0, 20);
+
+        setRelatedProperties(ranked);
       } catch (err) {
         console.warn(err);
       }
     })();
   }, [propertyId]);
+
+  const toggleExtra = (pid: string) => {
+    if (extraPropertyIds.includes(pid)) {
+      setExtraPropertyIds(extraPropertyIds.filter((x) => x !== pid));
+      return;
+    }
+    if (extraPropertyIds.length >= MAX_PROPERTIES_PER_VISIT - 1) {
+      toast({
+        title: "Maximum reached",
+        description: `You can select up to ${MAX_PROPERTIES_PER_VISIT} properties in one booking.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setExtraPropertyIds([...extraPropertyIds, pid]);
+  };
 
   // compute today's date in IST for setting min on date input
   useEffect(() => {
@@ -53,19 +120,21 @@ export default function BookSlot() {
     setTodayMin(`${y}-${m}-${d}`);
   }, []);
 
-  // fetch already booked slots for selected property + date
+  // fetch already booked slots for selected properties + date
   useEffect(() => {
-    if (!propertyId || !date) return;
+    if (selectedPropertyIds.length === 0 || !date) return;
     (async () => {
       if (!db) return;
       try {
-        const q = fsQuery(collection(db, "bookings"), fsWhere("property_ids", "array-contains", propertyId), fsWhere("visit_date", "==", date));
+        const q = fsQuery(collection(db, "bookings"), fsWhere("visit_date", "==", date));
         const snap = await fsGetDocs(q);
         const taken: Record<string, number> = {};
-        snap.forEach((doc) => {
-          const d = doc.data();
-          if (d.time_slot) {
-            taken[d.time_slot] = (taken[d.time_slot] || 0) + 1;
+        snap.forEach((sdoc) => {
+          const d = sdoc.data() as any;
+          const ts = d.time_slot;
+          const pids = Array.isArray(d.property_ids) ? d.property_ids : [];
+          if (ts && pids.some((pid: string) => selectedPropertyIds.includes(pid))) {
+            taken[ts] = (taken[ts] || 0) + 1;
           }
         });
         setBookedSlots(taken);
@@ -73,7 +142,7 @@ export default function BookSlot() {
         console.warn(err);
       }
     })();
-  }, [propertyId, date]);
+  }, [selectedPropertyIds, date]);
 
   // fetch bookings for the selected date across all properties to show which properties are booked per slot
   useEffect(() => {
@@ -153,9 +222,25 @@ export default function BookSlot() {
       const visitDateTime = new Date(utcMillis);
 
       // double-check availability before saving
-      const checkQ = fsQuery(collection(db, "bookings"), fsWhere("property_ids", "array-contains", propertyId), fsWhere("visit_date", "==", date), fsWhere("time_slot", "==", slot));
+      const checkQ = fsQuery(collection(db, "bookings"), fsWhere("visit_date", "==", date), fsWhere("time_slot", "==", slot));
       const checkSnap = await fsGetDocs(checkQ);
-      if (checkSnap.size >= 3) return toast({ title: "Slot full", description: "Selected slot already fully booked. Choose another slot.", variant: "destructive" });
+      const perPropertyCount: Record<string, number> = {};
+      checkSnap.forEach((sdoc) => {
+        const d = sdoc.data() as any;
+        const pids = Array.isArray(d.property_ids) ? d.property_ids : [];
+        pids.forEach((pid: string) => {
+          perPropertyCount[pid] = (perPropertyCount[pid] || 0) + 1;
+        });
+      });
+
+      const fullPid = selectedPropertyIds.find((pid) => (perPropertyCount[pid] || 0) >= 3);
+      if (fullPid) {
+        return toast({
+          title: "Slot full",
+          description: "One selected property is already fully booked for this slot. Choose another slot.",
+          variant: "destructive",
+        });
+      }
 
       const bkRef = await addDoc(collection(db, "bookings"), {
         user_id: user ? user.id : null,
@@ -166,7 +251,7 @@ export default function BookSlot() {
         time_slot: slot,
         visit_datetime: visitDateTime,
         caste,
-        property_ids: propertyId ? [propertyId] : [],
+        property_ids: selectedPropertyIds,
         charge: VISIT_CHARGE,
         brokerage: brokerage || 0,
         payment: {
@@ -178,6 +263,23 @@ export default function BookSlot() {
         status: "pending",
         createdAt: serverTimestamp(),
       });
+
+      const allKnown = [property, ...relatedProperties].filter(Boolean);
+      const propertyTitles = selectedPropertyIds.map((pid) => allKnown.find((p) => p.id === pid)?.title || pid);
+      openBookingWhatsApp({
+        bookingId: bkRef.id,
+        name,
+        phone,
+        date,
+        slot,
+        propertyTitles,
+        location: property?.location,
+        caste,
+        charge: VISIT_CHARGE,
+        brokerage: brokerage || 0,
+        total: totalDueNow,
+      });
+
       try {
         await addDoc(collection(db, "notifications"), {
           type: "booking",
@@ -221,6 +323,9 @@ export default function BookSlot() {
           <div className="mb-4 p-3 rounded bg-card">
             <div className="font-medium">{property.title}</div>
             <div className="text-sm text-muted-foreground">{property.location}</div>
+            <div className="text-xs text-muted-foreground mt-1">
+              You can add up to {MAX_PROPERTIES_PER_VISIT - 1} more related properties in this booking.
+            </div>
           </div>
         )}
 
@@ -237,6 +342,32 @@ export default function BookSlot() {
             <div className="text-xs text-muted-foreground mt-1">Choose a visit date (tap to open date picker)</div>
           )}
           <Input placeholder="Caste / Community" value={caste} onChange={(e) => setCaste(e.target.value)} />
+          {relatedProperties.length > 0 && (
+            <div className="rounded-md border border-border p-3">
+              <div className="text-sm font-medium mb-2">Add Related Properties (Optional)</div>
+              <div className="text-xs text-muted-foreground mb-2">Suggestions are based on your selected need (same type and rent/sell preference).</div>
+              <div className="max-h-40 overflow-y-auto space-y-1.5">
+                {relatedProperties.map((p) => {
+                  const selected = extraPropertyIds.includes(p.id);
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => toggleExtra(p.id)}
+                      className={`w-full text-left rounded px-2 py-1.5 text-xs ${selected ? "bg-secondary text-secondary-foreground" : "bg-muted text-muted-foreground"}`}
+                    >
+                      <div className="font-medium truncate">{p.title}</div>
+                      <div className="truncate">{p.location || "Unknown location"}</div>
+                      <div className="truncate">{p.type || "-"} • {p.status || "-"}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="text-xs mt-2 text-muted-foreground">
+                Selected: {selectedPropertyIds.length} / {MAX_PROPERTIES_PER_VISIT}
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-2">
             {[...TIME_SLOTS_MORNING, ...TIME_SLOTS_EVENING].map((s) => {
               // compute if slot is in past relative to now (IST)

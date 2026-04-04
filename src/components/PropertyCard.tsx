@@ -217,7 +217,7 @@ const PropertyCard = ({ property, index = 0 }: Props) => {
           <div className="bg-black rounded-lg overflow-hidden shadow-2xl">
               <div className="relative">
               <div
-                className={`w-full max-h-[80vh] bg-black rounded-md overflow-hidden`}
+                className={`w-full h-[65vh] sm:h-[80vh] bg-black rounded-md overflow-hidden`}
                 ref={containerRef}
                 style={{ touchAction: 'none', cursor: zoom > 1 ? (isPanning ? 'grabbing' : 'grab') : 'zoom-in' }}
                 onWheel={(e) => {
@@ -374,7 +374,7 @@ const PropertyCard = ({ property, index = 0 }: Props) => {
                   ref={imgRef}
                   src={images[viewerIndex]}
                   alt={`property-view-${viewerIndex}`}
-                  className="w-full object-contain"
+                  className="w-full h-full object-contain"
                   onLoad={(e) => {
                     const el = e.currentTarget;
                     if (el && el.naturalWidth && el.naturalHeight) setNaturalSize({ w: el.naturalWidth, h: el.naturalHeight });
