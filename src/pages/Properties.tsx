@@ -5,7 +5,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import PropertyCard from "@/components/PropertyCard";
-import { supabaseQuery } from "@/lib/supabase-query";
 import { db } from "@/integrations/firebase/client";
 import { collection, query as fsQuery, orderBy as fsOrderBy, onSnapshot } from "firebase/firestore";
 
@@ -15,7 +14,6 @@ const Properties = () => {
   const [typeFilter, setTypeFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [matchMode, setMatchMode] = useState<"all" | "any">("all");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -79,27 +77,14 @@ const Properties = () => {
       const s = (p.status || "").toString().toLowerCase();
       const isSell = /sold|sell|sale/.test(s);
       const isRent = /rent|rented|lease/.test(s);
-      if (statusFilter === "sell") return isSell;
+      if (statusFilter === "sale") return isSell;
       if (statusFilter === "rent") return isRent;
-      if (statusFilter === "available") return !(isSell || isRent);
       return true;
     };
 
-    if (matchMode === 'all') {
-      const matched = allProperties.filter((p) => matchSearch(p) && matchType(p) && matchLocation(p) && matchStatus(p));
-      return sortFeaturedFirst(matched);
-    }
-
-    // any = OR: include if matches any active filter
-    const matched = allProperties.filter((p) => {
-      const sMatch = q ? matchSearch(p) : false;
-      const tMatch = typeFilter === 'all' ? false : matchType(p);
-      const lMatch = locationFilter === 'all' ? false : matchLocation(p);
-      const stMatch = statusFilter === 'all' ? false : matchStatus(p);
-      return sMatch || tMatch || lMatch || stMatch;
-    });
+    const matched = allProperties.filter((p) => matchSearch(p) && matchType(p) && matchLocation(p) && matchStatus(p));
     return sortFeaturedFirst(matched);
-  }, [allProperties, search, typeFilter, locationFilter, statusFilter, matchMode]);
+  }, [allProperties, search, typeFilter, locationFilter, statusFilter]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -139,18 +124,10 @@ const Properties = () => {
             <SelectTrigger className="w-full sm:w-40 font-body"><SelectValue placeholder="Status" /></SelectTrigger>
             <SelectContent className="w-full sm:w-auto">
               <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="available">Available</SelectItem>
-              <SelectItem value="sell">Sell</SelectItem>
+              <SelectItem value="sale">Sale</SelectItem>
               <SelectItem value="rent">Rent</SelectItem>
             </SelectContent>
           </Select>
-          <div className="flex items-center gap-2 ml-auto">
-            <div className="text-sm text-muted-foreground">Match</div>
-            <div className="flex items-center rounded-md overflow-hidden border border-input">
-              <button type="button" onClick={() => setMatchMode('all')} className={`px-3 py-1 text-sm ${matchMode==='all'? 'bg-secondary text-white':'text-muted-foreground bg-background'}`}>All</button>
-              <button type="button" onClick={() => setMatchMode('any')} className={`px-3 py-1 text-sm ${matchMode==='any'? 'bg-secondary text-white':'text-muted-foreground bg-background'}`}>Any</button>
-            </div>
-          </div>
         </div>
 
         {loading ? (

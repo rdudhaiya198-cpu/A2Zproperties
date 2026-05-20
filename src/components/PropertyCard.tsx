@@ -1,11 +1,10 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { MapPin, BedDouble, Bath, Maximize, ZoomIn, ZoomOut, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Carousel, CarouselContent, CarouselItem, CarouselPrevious, CarouselNext } from "@/components/ui/carousel";
 import { formatPrice } from "@/lib/data";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import PropertyModal from "@/components/PropertyModal";
 import React, { useState, useEffect, useRef } from "react";
 
 interface PropertyData {
@@ -27,6 +26,7 @@ interface Props {
 }
 
 const PropertyCard = ({ property, index = 0 }: Props) => {
+  const navigate = useNavigate();
   const [imgError, setImgError] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
@@ -85,6 +85,20 @@ const PropertyCard = ({ property, index = 0 }: Props) => {
 
   const imgSrc = getImageSrc(property);
 
+  const handleCardClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("button, a, input, textarea, select")) return;
+    navigate(`/property/${property.id}`);
+  };
+
+  const handleCardKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.currentTarget !== event.target) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      navigate(`/property/${property.id}`);
+    }
+  };
+
   // keyboard navigation for viewer must be a top-level hook (not conditional)
   useEffect(() => {
     if (!viewerOpen) return;
@@ -129,7 +143,14 @@ const PropertyCard = ({ property, index = 0 }: Props) => {
     transition={{ delay: index * 0.08, duration: 0.5 }}
   >
     <div className="group">
-      <div className="bg-card rounded-lg overflow-hidden shadow-card hover:shadow-card-hover transition-all duration-300 group-hover:-translate-y-1">
+      <div
+        className="bg-card rounded-lg overflow-hidden shadow-card hover:shadow-card-hover transition-all duration-300 group-hover:-translate-y-1 cursor-pointer"
+        role="button"
+        tabIndex={0}
+        aria-label={`Open ${property.title} details`}
+        onClick={handleCardClick}
+        onKeyDown={handleCardKeyDown}
+      >
         <div className="relative h-48 bg-muted flex items-center justify-center overflow-hidden">
           {Array.isArray(property.images) && property.images.length > 1 ? (
             <Carousel className="h-full">
@@ -164,7 +185,7 @@ const PropertyCard = ({ property, index = 0 }: Props) => {
           </div>
           {/* agent avatar overlay + view button */}
           <div className="absolute bottom-1 right-1 sm:bottom-3 sm:right-3 flex items-center gap-2 z-40">
-            <button onClick={() => { setViewerIndex(0); setViewerOpen(true); }} className="bg-white/90 p-2 sm:p-2 rounded text-sm" aria-label="View images">
+            <button onClick={(e) => { e.stopPropagation(); setViewerIndex(0); setViewerOpen(true); }} className="bg-white/90 p-2 sm:p-2 rounded text-sm" aria-label="View images">
               <Maximize className="h-4 w-4" />
             </button>
             <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden bg-muted flex items-center justify-center">
@@ -201,8 +222,9 @@ const PropertyCard = ({ property, index = 0 }: Props) => {
             </span>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
               <div className="text-sm text-muted-foreground">ATOZ PROPERTIES</div>
-              <PropertyModal propertyId={property.id} trigger={<Button size="sm" variant="ghost" className="w-full sm:w-auto">Fully Detail</Button>} />
-              <Link to={`/book?propertyId=${property.id}`}><Button size="sm" variant="outline" className="w-full sm:w-auto">Book Slot</Button></Link>
+              <Link to={`/book?propertyId=${property.id}`} onClick={(e) => e.stopPropagation()}>
+                <Button size="sm" className="w-full sm:w-auto bg-secondary text-secondary-foreground hover:bg-secondary/90">Book Site Visit</Button>
+              </Link>
             </div>
           </div>
         </div>

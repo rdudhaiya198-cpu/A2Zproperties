@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
@@ -41,6 +42,7 @@ const PropertyDetail = () => {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [agreeToPay, setAgreeToPay] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState("cash_upi_on_visit");
   const location = useLocation();
 
   useEffect(() => {
@@ -90,6 +92,7 @@ const PropertyDetail = () => {
   }
 
   const selectedPropertyIds = [property.id, ...extraPropertyIds];
+  const bannerImage = property?.image_url || property?.image || property?.images?.[0] || null;
 
   const toggleExtra = (pid: string) => {
     if (extraPropertyIds.includes(pid)) {
@@ -140,7 +143,7 @@ const PropertyDetail = () => {
         visit_datetime: visitDateTime,
         property_ids: selectedPropertyIds,
         charge: VISIT_CHARGE,
-        payment: { amount: VISIT_CHARGE, status: "pending", method: "none" },
+        payment: { amount: VISIT_CHARGE, status: "pending", method: paymentMethod },
         status: "pending",
         createdAt: serverTimestamp(),
       });
@@ -206,8 +209,8 @@ const PropertyDetail = () => {
           <div className="lg:col-span-2">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
               <div className="relative h-64 md:h-96 bg-muted rounded-lg flex items-center justify-center overflow-hidden">
-                {property.image_url || property.image ? (
-                  <img src={property.image_url || property.image} alt={property.title} className="absolute inset-0 w-full h-full object-cover rounded-lg" loading="lazy" />
+                {bannerImage ? (
+                  <img src={bannerImage} alt={property.title} className="absolute inset-0 w-full h-full object-cover rounded-lg" loading="lazy" />
                 ) : (
                   <>
                     <div className="absolute inset-0 bg-hero opacity-10 rounded-lg" />
@@ -342,6 +345,19 @@ const PropertyDetail = () => {
                 )}
 
                 <Textarea placeholder="Any message or requirements..." value={message} onChange={(e) => setMessage(e.target.value)} className="font-body" />
+
+                <div>
+                  <p className="text-sm font-body font-medium text-card-foreground mb-2">Payment Method</p>
+                  <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                    <SelectTrigger className="font-body">
+                      <SelectValue placeholder="Select payment method" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="online">Pay Online (UPI / Card / Net Banking)</SelectItem>
+                      <SelectItem value="cash_upi_on_visit">Cash/UPI at Site Visit</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
                 <div className="bg-muted rounded-md p-3 text-xs font-body text-muted-foreground">
                   <p className="font-medium text-card-foreground mb-1">₹{VISIT_CHARGE} Visit Charge Applicable</p>

@@ -6,6 +6,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { storage, db } from "@/integrations/firebase/client";
 import { doc as fsDoc, getDoc as fsGetDoc, addDoc, collection, serverTimestamp, getDocs as fsGetDocs, query as fsQuery, where as fsWhere } from "firebase/firestore";
@@ -27,6 +28,7 @@ export default function BookSlot() {
   const [bookedProperties, setBookedProperties] = useState<Record<string, string[]>>({});
   const [todayMin, setTodayMin] = useState("");
   const [agree, setAgree] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState("cash_upi_on_visit");
   const { toast } = useToast();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -257,7 +259,7 @@ export default function BookSlot() {
         payment: {
           amount: totalDueNow,
           status: "pending",
-          method: "none",
+          method: paymentMethod,
           breakdown: { visit: VISIT_CHARGE, brokerage: brokerage || 0 },
         },
         status: "pending",
@@ -318,7 +320,7 @@ export default function BookSlot() {
         </div>
       </div>
       <div className="container mx-auto px-4 py-10 max-w-2xl">
-        <h1 className="text-2xl font-display font-bold mb-4">Book Slot</h1>
+        <h1 className="text-2xl font-display font-bold mb-4">Book Site Visit</h1>
         {property && (
           <div className="mb-4 p-3 rounded bg-card">
             <div className="font-medium">{property.title}</div>
@@ -342,6 +344,18 @@ export default function BookSlot() {
             <div className="text-xs text-muted-foreground mt-1">Choose a visit date (tap to open date picker)</div>
           )}
           <Input placeholder="Caste / Community" value={caste} onChange={(e) => setCaste(e.target.value)} />
+          <div>
+            <div className="text-sm font-medium mb-2">Payment Method</div>
+            <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select payment method" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="online">Pay Online (UPI / Card / Net Banking)</SelectItem>
+                <SelectItem value="cash_upi_on_visit">Cash/UPI at Site Visit</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           {relatedProperties.length > 0 && (
             <div className="rounded-md border border-border p-3">
               <div className="text-sm font-medium mb-2">Add Related Properties (Optional)</div>
@@ -420,7 +434,7 @@ export default function BookSlot() {
           )}
 
           <div className="flex justify-end">
-            <Button onClick={handleBook} className="bg-primary text-primary-foreground">Confirm Booking</Button>
+            <Button onClick={handleBook} className="bg-primary text-primary-foreground">Confirm Site Visit</Button>
           </div>
         </div>
       </div>

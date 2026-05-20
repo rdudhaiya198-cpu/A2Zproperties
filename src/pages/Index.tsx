@@ -4,21 +4,33 @@ import { motion } from "framer-motion";
 import { ArrowRight, Phone, Building, Home, MapPin, Star } from "lucide-react";
 import ContactMenu from "@/components/ContactMenu";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import PropertyCard from "@/components/PropertyCard";
 import { PHONE_NUMBER } from "@/lib/data";
 import { supabaseQuery } from "@/lib/supabase-query";
 import heroBg from "@/assets/hero-bg.jpg";
-
-const stats = [
-  { label: "Properties Listed", value: "500+", icon: Building },
-  { label: "Happy Clients", value: "1200+", icon: Star },
-  { label: "Locations", value: "50+", icon: MapPin },
-];
+import { db } from "@/integrations/firebase/client";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 const Index = () => {
+  const { toast } = useToast();
   const [featured, setFeatured] = useState<any[]>([]);
+  const [stats, setStats] = useState<{ properties: number | null; locations: number | null }>({
+    properties: null,
+    locations: null,
+  });
+  const [quickForm, setQuickForm] = useState({
+    name: "",
+    phone: "",
+    requirement: "",
+    propertyType: "",
+  });
+  const [quickLoading, setQuickLoading] = useState(false);
 
   useEffect(() => {
     const fetchFeatured = async () => {
@@ -30,8 +42,107 @@ const Index = () => {
       if (error) console.error("Error fetching featured:", error);
       setFeatured(data || []);
     };
+    const fetchStats = async () => {
+      const { data, error } = await supabaseQuery({ table: "properties" });
+      if (error) {
+        console.error("Error fetching stats:", error);
+        return;
+      }
+      const items = data || [];
+      const locationSet = new Set<string>();
+      items.forEach((p: any) => {
+        const loc = (p.location || p.address || "").toString().trim();
+        if (loc) locationSet.add(loc);
+      });
+      setStats({ properties: items.length, locations: locationSet.size });
+    };
     fetchFeatured();
+    fetchStats();
   }, []);
+
+  const updateQuickForm = (field: string, value: string) => {
+    setQuickForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleQuickSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickForm.name.trim() || !quickForm.phone.trim() || !quickForm.requirement.trim()) {
+      toast({ title: "Please fill all required fields", variant: "destructive" });
+      return;
+    }
+    const phoneDigits = quickForm.phone.replace(/\D/g, "");
+    if (phoneDigits.length < 10) {
+      toast({ title: "Please enter a valid phone number", variant: "destructive" });
+      return;
+    }
+    setQuickLoading(true);
+    try {
+      if (!db) throw new Error("Firebase not configured. Set VITE_FIREBASE_* env vars.");
+      const docRef = await addDoc(collection(db, "inquiries"), {
+        name: quickForm.name.trim(),
+        phone: quickForm.phone.trim(),
+        requirement: quickForm.requirement.trim(),
+        message: quickForm.requirement.trim(),
+        property_type: quickForm.propertyType || null,
+        source: "homepage_quick_enquiry",
+        status: "new",
+        createdAt: serverTimestamp(),
+      });
+
+      try {
+        await addDoc(collection(db, "notifications"), {
+          type: "inquiry",
+          refId: docRef.id,
+          title: "New Inquiry",
+          message: `${quickForm.name.trim()} • ${quickForm.phone.trim()}`,
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+        try {
+          const fnUrl = import.meta.env.VITE_FUNCTIONS_URL || "/api";
+          await fetch(`${fnUrl.replace(/\/$/, "")}/sendNotification`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: "inquiry", refId: docRef.id, title: "New Inquiry", message: `${quickForm.name.trim()} • ${quickForm.phone.trim()}` }),
+          });
+        } catch (err) {
+          console.warn("sendNotification call failed", err);
+        }
+      } catch (err) {
+        console.warn("Failed to create notification", err);
+      }
+
+      try {
+        const webhookUrl = import.meta.env.VITE_APPS_SCRIPT_WEBHOOK_URL;
+        const webhookSecret = import.meta.env.VITE_APPS_SCRIPT_WEBHOOK_SECRET;
+        if (webhookUrl) {
+          await fetch(webhookUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(webhookSecret ? { "x-webhook-secret": webhookSecret } : {}),
+            },
+            body: JSON.stringify({ ...quickForm, submittedAt: new Date().toISOString() }),
+          });
+        }
+      } catch (err) {
+        console.warn("Apps Script webhook failed", err);
+      }
+
+      toast({ title: "Inquiry Submitted!", description: "We will contact you shortly." });
+      setQuickForm({ name: "", phone: "", requirement: "", propertyType: "" });
+    } catch (err: any) {
+      toast({ title: "Error", description: String(err?.message || err), variant: "destructive" });
+    } finally {
+      setQuickLoading(false);
+    }
+  };
+
+  const statsCards = [
+    { label: "Properties Listed", value: stats.properties === null ? "—" : String(stats.properties), icon: Building },
+    { label: "Happy Clients", value: "3000+", icon: Star },
+    { label: "Locations", value: stats.locations === null ? "—" : String(stats.locations), icon: MapPin },
+  ];
 
   return (
     <div className="min-h-screen bg-background">
@@ -66,7 +177,7 @@ const Index = () => {
       {/* Stats */}
       <section className="relative -mt-16 z-20 container mx-auto px-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {stats.map((stat, i) => (
+          {statsCards.map((stat, i) => (
             <motion.div key={stat.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 + i * 0.1 }}
               className="bg-card rounded-lg p-6 shadow-card flex items-center gap-4">
               <div className="h-12 w-12 rounded-full bg-secondary/10 flex items-center justify-center">
@@ -78,6 +189,49 @@ const Index = () => {
               </div>
             </motion.div>
           ))}
+        </div>
+      </section>
+
+      {/* Quick Enquiry */}
+      <section className="relative py-20">
+        <div className="absolute inset-0 bg-gradient-to-br from-secondary/10 via-background to-primary/10" />
+        <div className="relative container mx-auto px-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-center">
+            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
+              <h2 className="text-3xl md:text-4xl font-display font-bold text-foreground">
+                Quick <span className="text-secondary">Enquiry</span>
+              </h2>
+              <p className="mt-3 text-muted-foreground font-body max-w-lg">
+                Want to explore more property options? Make an enquiry and our team will reach out to you.
+              </p>
+              <div className="mt-6 flex items-center gap-4 text-sm text-muted-foreground">
+                <div className="px-3 py-1 rounded-full bg-secondary/10 text-secondary font-body">Fast response</div>
+                <div className="px-3 py-1 rounded-full bg-secondary/10 text-secondary font-body">Personalized options</div>
+              </div>
+            </motion.div>
+
+            <motion.form onSubmit={handleQuickSubmit} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
+              className="bg-card rounded-xl p-6 shadow-card space-y-4">
+              <Input placeholder="Your Name *" value={quickForm.name} onChange={(e) => updateQuickForm("name", e.target.value)} className="font-body" required />
+              <Input placeholder="Mobile Number *" value={quickForm.phone} onChange={(e) => updateQuickForm("phone", e.target.value)} className="font-body" required />
+              <Textarea placeholder="Requirement *" value={quickForm.requirement} onChange={(e) => updateQuickForm("requirement", e.target.value)} className="font-body min-h-[90px]" required />
+              <Select value={quickForm.propertyType} onValueChange={(v) => updateQuickForm("propertyType", v)}>
+                <SelectTrigger className="font-body">
+                  <SelectValue placeholder="Property Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="rent">Rent</SelectItem>
+                  <SelectItem value="sale">Sale</SelectItem>
+                  <SelectItem value="residential">Residential</SelectItem>
+                  <SelectItem value="commercial">Commercial</SelectItem>
+                  <SelectItem value="land">Land/Plot</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button type="submit" disabled={quickLoading} className="w-full bg-secondary text-secondary-foreground hover:bg-secondary/90 font-body">
+                {quickLoading ? "Submitting..." : "Submit Enquiry"}
+              </Button>
+            </motion.form>
+          </div>
         </div>
       </section>
 
