@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import { isValidEmail } from "@/lib/validation";
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -13,12 +14,26 @@ const Auth = () => {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState<{ email?: string; password?: string; fullName?: string }>({});
   const { signIn, signUp } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const nextErrors: { email?: string; password?: string; fullName?: string } = {};
+    if (!email.trim()) nextErrors.email = "Email is required";
+    else if (!isValidEmail(email)) nextErrors.email = "Enter a valid email";
+    if (!password) nextErrors.password = "Password is required";
+    else if (password.length < 6) nextErrors.password = "Password must be at least 6 characters";
+    if (!isLogin && !fullName.trim()) nextErrors.fullName = "Full name is required";
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      const firstError = Object.values(nextErrors).find(Boolean);
+      toast({ title: "Please fix the highlighted fields", description: firstError, variant: "destructive" });
+      return;
+    }
+
     setLoading(true);
     try {
       if (isLogin) {
@@ -27,11 +42,6 @@ const Auth = () => {
         toast({ title: "Welcome back!" });
         navigate("/");
       } else {
-        if (!fullName.trim()) {
-          toast({ title: "Please enter your name", variant: "destructive" });
-          setLoading(false);
-          return;
-        }
         const { error } = await signUp(email, password, fullName);
         if (error) throw error;
         toast({ title: "Account created!", description: "You are now logged in." });
@@ -39,8 +49,9 @@ const Auth = () => {
       }
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
@@ -64,11 +75,15 @@ const Auth = () => {
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
+                  onChange={(e) => {
+                    setFullName(e.target.value);
+                    if (errors.fullName) setErrors((prev) => ({ ...prev, fullName: undefined }));
+                  }}
                   placeholder="Enter your full name"
                   className="pl-9 font-body"
                 />
               </div>
+              {errors.fullName && <p className="mt-1 text-xs text-destructive">{errors.fullName}</p>}
             </div>
           )}
           <div>
@@ -78,12 +93,15 @@ const Auth = () => {
               <Input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (errors.email) setErrors((prev) => ({ ...prev, email: undefined }));
+                }}
                 placeholder="your@email.com"
                 className="pl-9 font-body"
-                required
               />
             </div>
+            {errors.email && <p className="mt-1 text-xs text-destructive">{errors.email}</p>}
           </div>
           <div>
             <Label className="font-body">Password</Label>
@@ -92,13 +110,15 @@ const Auth = () => {
               <Input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (errors.password) setErrors((prev) => ({ ...prev, password: undefined }));
+                }}
                 placeholder="••••••••"
                 className="pl-9 font-body"
-                required
-                minLength={6}
               />
             </div>
+            {errors.password && <p className="mt-1 text-xs text-destructive">{errors.password}</p>}
           </div>
 
           <Button
@@ -113,7 +133,10 @@ const Auth = () => {
         <p className="text-center text-sm text-muted-foreground font-body mt-4">
           {isLogin ? "Don't have an account?" : "Already have an account?"}{" "}
           <button
-            onClick={() => setIsLogin(!isLogin)}
+            onClick={() => {
+              setIsLogin(!isLogin);
+              setErrors({});
+            }}
             className="text-secondary hover:underline font-medium"
           >
             {isLogin ? "Sign Up" : "Sign In"}

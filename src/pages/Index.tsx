@@ -16,6 +16,7 @@ import { supabaseQuery } from "@/lib/supabase-query";
 import heroBg from "@/assets/hero-bg.jpg";
 import { db } from "@/integrations/firebase/client";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { isValidPhone } from "@/lib/validation";
 
 const Index = () => {
   const { toast } = useToast();
@@ -30,6 +31,7 @@ const Index = () => {
     requirement: "",
     propertyType: "",
   });
+  const [quickErrors, setQuickErrors] = useState<{ name?: string; phone?: string; requirement?: string }>({});
   const [quickLoading, setQuickLoading] = useState(false);
 
   useEffect(() => {
@@ -62,19 +64,25 @@ const Index = () => {
 
   const updateQuickForm = (field: string, value: string) => {
     setQuickForm((prev) => ({ ...prev, [field]: value }));
+    if (quickErrors[field as "name" | "phone" | "requirement"]) {
+      setQuickErrors((prev) => ({ ...prev, [field]: undefined }));
+    }
   };
 
   const handleQuickSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!quickForm.name.trim() || !quickForm.phone.trim() || !quickForm.requirement.trim()) {
-      toast({ title: "Please fill all required fields", variant: "destructive" });
+    const nextErrors: { name?: string; phone?: string; requirement?: string } = {};
+    if (!quickForm.name.trim()) nextErrors.name = "Name is required";
+    if (!quickForm.phone.trim()) nextErrors.phone = "Phone number is required";
+    else if (!isValidPhone(quickForm.phone)) nextErrors.phone = "Enter a valid phone number";
+    if (!quickForm.requirement.trim()) nextErrors.requirement = "Requirement is required";
+    setQuickErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      const firstError = Object.values(nextErrors).find(Boolean);
+      toast({ title: "Please fix the highlighted fields", description: firstError, variant: "destructive" });
       return;
     }
-    const phoneDigits = quickForm.phone.replace(/\D/g, "");
-    if (phoneDigits.length < 10) {
-      toast({ title: "Please enter a valid phone number", variant: "destructive" });
-      return;
-    }
+
     setQuickLoading(true);
     try {
       if (!db) throw new Error("Firebase not configured. Set VITE_FIREBASE_* env vars.");
@@ -212,9 +220,18 @@ const Index = () => {
 
             <motion.form onSubmit={handleQuickSubmit} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
               className="bg-card rounded-xl p-6 shadow-card space-y-4">
-              <Input placeholder="Your Name *" value={quickForm.name} onChange={(e) => updateQuickForm("name", e.target.value)} className="font-body" required />
-              <Input placeholder="Mobile Number *" value={quickForm.phone} onChange={(e) => updateQuickForm("phone", e.target.value)} className="font-body" required />
-              <Textarea placeholder="Requirement *" value={quickForm.requirement} onChange={(e) => updateQuickForm("requirement", e.target.value)} className="font-body min-h-[90px]" required />
+              <div>
+                <Input placeholder="Your Name *" value={quickForm.name} onChange={(e) => updateQuickForm("name", e.target.value)} className="font-body" />
+                {quickErrors.name && <p className="mt-1 text-xs text-destructive">{quickErrors.name}</p>}
+              </div>
+              <div>
+                <Input placeholder="Mobile Number *" value={quickForm.phone} onChange={(e) => updateQuickForm("phone", e.target.value)} className="font-body" />
+                {quickErrors.phone && <p className="mt-1 text-xs text-destructive">{quickErrors.phone}</p>}
+              </div>
+              <div>
+                <Textarea placeholder="Requirement *" value={quickForm.requirement} onChange={(e) => updateQuickForm("requirement", e.target.value)} className="font-body min-h-[90px]" />
+                {quickErrors.requirement && <p className="mt-1 text-xs text-destructive">{quickErrors.requirement}</p>}
+              </div>
               <Select value={quickForm.propertyType} onValueChange={(v) => updateQuickForm("propertyType", v)}>
                 <SelectTrigger className="font-body">
                   <SelectValue placeholder="Property Type" />

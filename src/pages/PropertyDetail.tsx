@@ -1,13 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, Link, useNavigate, useLocation } from "react-router-dom";
-import { ArrowLeft, MapPin, BedDouble, Bath, Maximize, Phone, CheckCircle2, Clock, IndianRupee } from "lucide-react";
+import { ArrowLeft, MapPin, Maximize, Phone, CheckCircle2, Clock, IndianRupee } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious, type CarouselApi } from "@/components/ui/carousel";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
@@ -15,13 +12,9 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import ContactMenu from "@/components/ContactMenu";
 import { useAuth } from "@/hooks/useAuth";
-import { supabaseQuery } from "@/lib/supabase-query";
 import { db } from "@/integrations/firebase/client";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import {
-  formatPrice, TIME_SLOTS_MORNING, TIME_SLOTS_EVENING,
-  VISIT_CHARGE, MAX_PROPERTIES_PER_VISIT, PHONE_NUMBER,
-} from "@/lib/data";
+import { collection, addDoc, serverTimestamp, doc as fsDoc, getDoc as fsGetDoc, getDocs as fsGetDocs, query as fsQuery, orderBy as fsOrderBy } from "firebase/firestore";
+import { formatPrice, VISIT_CHARGE, MAX_PROPERTIES_PER_VISIT, PHONE_NUMBER, UPI_ID, GOOGLE_SHEET_URL } from "@/lib/data";
 import { motion } from "framer-motion";
 import { openBookingWhatsApp } from "@/lib/whatsapp";
 
@@ -44,19 +37,44 @@ const PropertyDetail = () => {
   const [agreeToPay, setAgreeToPay] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("cash_upi_on_visit");
   const location = useLocation();
+  const [carouselApi, setCarouselApi] = useState<CarouselApi | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [paymentScreenshot, setPaymentScreenshot] = useState<File | null>(null);
+  const [paymentScreenshotPreview, setPaymentScreenshotPreview] = useState<string | null>(null);
+  const [uploadingScreenshot, setUploadingScreenshot] = useState(false);
+  const [showQr, setShowQr] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     const fetchData = async () => {
-      const [propRes, allRes] = await Promise.all([
-        supabaseQuery({ table: "properties", filters: { "id": `eq.${id}` }, limit: 1 }),
-        supabaseQuery({ table: "properties", select: "id,title", filters: { "id": `neq.${id || ""}` } }),
-      ]);
-      setProperty(propRes.data?.[0] || null);
-      setAllProperties(allRes.data || []);
-      setLoading(false);
+      if (!id) return;
+      if (!db) {
+        toast({ title: "Configuration error", description: "Firebase not configured. Set VITE_FIREBASE_* env vars.", variant: "destructive" });
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      try {
+        const propRef = fsDoc(db, "properties", id);
+        const [propSnap, allSnap] = await Promise.all([
+          fsGetDoc(propRef),
+          fsGetDocs(fsQuery(collection(db, "properties"), fsOrderBy("createdAt", "desc"))),
+        ]);
+        if (cancelled) return;
+        const propData = propSnap.exists() ? { id: propSnap.id, ...propSnap.data() } : null;
+        const allData = allSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((p) => p.id !== id);
+        setProperty(propData);
+        setAllProperties(allData);
+      } catch (err: any) {
+        console.error("Failed to load property", err);
+        toast({ title: "Error", description: String(err?.message || err), variant: "destructive" });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     };
     fetchData();
-  }, [id]);
+    return () => { cancelled = true; };
+  }, [id, toast]);
 
   useEffect(() => {
     // if URL has #booking, scroll to booking form
@@ -67,6 +85,149 @@ const PropertyDetail = () => {
       }, 200);
     }
   }, [location.hash]);
+
+  const images = useMemo(() => {
+    const list = Array.isArray(property?.images) ? property.images : [];
+    const cleaned = list.filter((src: any) => typeof src === "string" && src.trim() !== "");
+    const fallback = property?.image_url || property?.image || null;
+    if (fallback && !cleaned.includes(fallback)) cleaned.unshift(fallback);
+    return cleaned;
+  }, [property]);
+
+  const summaryLine = useMemo(() => {
+    if (!property) return "";
+    const parts: string[] = [];
+    if (property.bedrooms) parts.push(`${property.bedrooms} BHK`);
+    if (property.bathrooms) parts.push(`${property.bathrooms} Bathroom${property.bathrooms > 1 ? "s" : ""}`);
+    if (property.area) parts.push(`${property.area} sqft`);
+    return parts.join(" - ");
+  }, [property]);
+
+  const displayValue = (value: any) => {
+    if (value === null || value === undefined || value === "") return "-";
+    return String(value);
+  };
+
+  const detailItems: { label: string; value: string }[] = property
+    ? [
+        { label: "Type", value: displayValue(property.type) },
+        { label: "Super Built-up area sqft", value: displayValue(property.super_builtup ?? property.superBuiltup ?? property.area) },
+        { label: "Furnishing", value: displayValue(property.furnishing ?? property.furnished) },
+        { label: "Listed By", value: displayValue(property.listed_by ?? property.listedBy ?? "ATOZ PROPERTIES") },
+        { label: "Carpet area sqft", value: displayValue(property.carpet_area ?? property.carpetArea ?? property.area) },
+        { label: "Maintenance (Monthly)", value: displayValue(property.maintenance ?? property.maintenance_monthly ?? property.maintenanceMonthly) },
+        { label: "Floor No", value: displayValue(property.floor_no ?? property.floorNo) },
+        { label: "Bedrooms", value: displayValue(property.bedrooms ?? property.bhk) },
+        { label: "Bathrooms", value: displayValue(property.bathrooms) },
+        { label: "Project Status", value: displayValue(property.project_status ?? property.projectStatus) },
+        { label: "Facing", value: displayValue(property.facing) },
+        { label: "Car Parking", value: displayValue(property.car_parking ?? property.carParking) },
+        { label: "Total Floors", value: displayValue(property.total_floors ?? property.totalFloors) },
+      ]
+    : [];
+
+  const upiPayUrl = useMemo(() => {
+    const note = property?.title ? `Site Visit - ${property.title}` : "Site Visit Booking";
+    const params = new URLSearchParams({
+      pa: UPI_ID,
+      pn: "ATOZ PROPERTIES",
+      am: String(VISIT_CHARGE),
+      cu: "INR",
+      tn: note,
+    });
+    return `upi://pay?${params.toString()}`;
+  }, [property?.title]);
+
+  const isMobile = useMemo(() => {
+    if (typeof navigator === "undefined") return false;
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  }, []);
+
+  const qrSrc = useMemo(() => {
+    return `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(upiPayUrl)}`;
+  }, [upiPayUrl]);
+
+  useEffect(() => {
+    if (!carouselApi) return;
+    const onSelect = () => setSelectedIndex(carouselApi.selectedScrollSnap());
+    onSelect();
+    carouselApi.on("select", onSelect);
+    return () => {
+      carouselApi.off("select", onSelect);
+    };
+  }, [carouselApi]);
+
+  useEffect(() => {
+    if (!carouselApi) return;
+    carouselApi.scrollTo(0, true);
+    setSelectedIndex(0);
+  }, [carouselApi, property?.id]);
+
+  useEffect(() => {
+    if (paymentMethod !== "online") {
+      setPaymentScreenshot(null);
+      setPaymentScreenshotPreview(null);
+      setShowQr(false);
+    }
+  }, [paymentMethod]);
+
+  useEffect(() => {
+    return () => {
+      if (paymentScreenshotPreview) URL.revokeObjectURL(paymentScreenshotPreview);
+    };
+  }, [paymentScreenshotPreview]);
+
+  const handlePaymentScreenshotChange = (file: File | null) => {
+    if (!file) {
+      setPaymentScreenshot(null);
+      setPaymentScreenshotPreview(null);
+      return;
+    }
+    setPaymentScreenshot(file);
+    const nextPreview = URL.createObjectURL(file);
+    setPaymentScreenshotPreview(nextPreview);
+  };
+
+  const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+
+  const submitPaymentScreenshot = async (bookingId?: string) => {
+    if (!paymentScreenshot) return;
+    setUploadingScreenshot(true);
+    try {
+      const base64 = await fileToBase64(paymentScreenshot);
+      const formData = new FormData();
+      formData.append("bookingId", bookingId || "");
+      formData.append("name", name || "");
+      formData.append("phone", phone || "");
+      formData.append("amount", String(VISIT_CHARGE));
+      formData.append("upi", UPI_ID);
+      formData.append("propertyId", property?.id || "");
+      formData.append("propertyTitle", property?.title || "");
+      formData.append("visitDate", selectedDate ? format(selectedDate, "yyyy-MM-dd") : "");
+      formData.append("timeSlot", selectedSlot || "");
+      formData.append("paymentMethod", paymentMethod);
+      formData.append("screenshotName", paymentScreenshot.name);
+      formData.append("screenshot", base64);
+      formData.append("timestamp", new Date().toISOString());
+
+      try {
+        const res = await fetch(GOOGLE_SHEET_URL, { method: "POST", body: formData });
+        if (res.type !== "opaque" && !res.ok) throw new Error(`Sheet error ${res.status}`);
+      } catch (err) {
+        await fetch(GOOGLE_SHEET_URL, { method: "POST", mode: "no-cors", body: formData });
+      }
+    } catch (err: any) {
+      console.warn("Failed to upload payment screenshot", err);
+      toast({ title: "Screenshot upload failed", description: "We will verify manually if needed.", variant: "destructive" });
+    } finally {
+      setUploadingScreenshot(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -92,7 +253,6 @@ const PropertyDetail = () => {
   }
 
   const selectedPropertyIds = [property.id, ...extraPropertyIds];
-  const bannerImage = property?.image_url || property?.image || property?.images?.[0] || null;
 
   const toggleExtra = (pid: string) => {
     if (extraPropertyIds.includes(pid)) {
@@ -116,6 +276,10 @@ const PropertyDetail = () => {
     }
     if (!agreeToPay) {
       toast({ title: "Payment required", description: `Please agree to pay ₹${VISIT_CHARGE} booking charge.`, variant: "destructive" });
+      return;
+    }
+    if (paymentMethod === "online" && !paymentScreenshot) {
+      toast({ title: "Upload required", description: "Please upload your payment screenshot.", variant: "destructive" });
       return;
     }
     try {
@@ -143,10 +307,14 @@ const PropertyDetail = () => {
         visit_datetime: visitDateTime,
         property_ids: selectedPropertyIds,
         charge: VISIT_CHARGE,
-        payment: { amount: VISIT_CHARGE, status: "pending", method: paymentMethod },
+        payment: { amount: VISIT_CHARGE, status: paymentMethod === "online" ? "submitted" : "pending", method: paymentMethod },
         status: "pending",
         createdAt: serverTimestamp(),
       });
+
+      if (paymentMethod === "online") {
+        await submitPaymentScreenshot(bookingRef.id);
+      }
 
       const propertyTitleMap = [property, ...allProperties].reduce((acc: Record<string, string>, p: any) => {
         if (p?.id) acc[p.id] = p.title || p.id;
@@ -195,6 +363,8 @@ const PropertyDetail = () => {
     }
     setName(""); setPhone(""); setEmail(""); setMessage("");
     setSelectedDate(undefined); setSelectedSlot(""); setExtraPropertyIds([]);
+    setPaymentScreenshot(null);
+    setPaymentScreenshotPreview(null);
   };
 
   return (
@@ -208,43 +378,89 @@ const PropertyDetail = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-              <div className="relative h-64 md:h-96 bg-muted rounded-lg flex items-center justify-center overflow-hidden">
-                {bannerImage ? (
-                  <img src={bannerImage} alt={property.title} className="absolute inset-0 w-full h-full object-cover rounded-lg" loading="lazy" />
-                ) : (
-                  <>
-                    <div className="absolute inset-0 bg-hero opacity-10 rounded-lg" />
-                    <Maximize className="h-16 w-16 text-muted-foreground/30" />
-                  </>
-                )}
-                <div className="absolute top-4 left-4 flex gap-2">
+              <div className="relative">
+                <Carousel setApi={setCarouselApi} className="h-64 md:h-[420px]">
+                  <CarouselContent className="h-full">
+                    {images.length > 0 ? (
+                      images.map((src, i) => (
+                        <CarouselItem key={`${src}-${i}`} className="h-full">
+                          <div className="relative h-64 md:h-[420px] bg-muted rounded-lg overflow-hidden">
+                            <img src={src} alt={`${property.title}-${i}`} className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
+                          </div>
+                        </CarouselItem>
+                      ))
+                    ) : (
+                      <CarouselItem className="h-full">
+                        <div className="relative h-64 md:h-[420px] bg-muted rounded-lg flex items-center justify-center">
+                          <div className="text-muted-foreground flex flex-col items-center gap-2">
+                            <Maximize className="h-10 w-10" />
+                            <span className="text-sm">No image</span>
+                          </div>
+                        </div>
+                      </CarouselItem>
+                    )}
+                  </CarouselContent>
+                  {images.length > 1 && (
+                    <>
+                      <CarouselPrevious className="left-3 bg-white/90 hover:bg-white" />
+                      <CarouselNext className="right-3 bg-white/90 hover:bg-white" />
+                    </>
+                  )}
+                </Carousel>
+
+                <div className="absolute top-4 left-4 flex gap-2 z-10">
                   <Badge className="bg-secondary text-secondary-foreground font-body">{property.status}</Badge>
                   <Badge variant="outline" className="bg-card/90 font-body">{property.type}</Badge>
                 </div>
               </div>
 
+              {images.length > 1 && (
+                <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                  {images.map((src, i) => (
+                    <button
+                      key={`${src}-thumb-${i}`}
+                      type="button"
+                      onClick={() => carouselApi?.scrollTo(i)}
+                      className={cn(
+                        "h-16 w-20 shrink-0 rounded-md overflow-hidden border",
+                        selectedIndex === i ? "border-secondary" : "border-border",
+                      )}
+                    >
+                      <img src={src} alt={`${property.title}-thumb-${i}`} className="h-full w-full object-cover" loading="lazy" />
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <div className="mt-6">
-                <h1 className="text-2xl md:text-3xl font-display font-bold text-foreground">{property.title}</h1>
-                {property.address && (
-                  <div className="flex items-center gap-2 mt-2 text-muted-foreground font-body">
-                    <MapPin className="h-4 w-4" /> {property.address}
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <h1 className="text-2xl md:text-3xl font-display font-bold text-foreground">{property.title}</h1>
+                    {(property.location || property.address) && (
+                      <div className="flex items-center gap-2 mt-2 text-muted-foreground font-body">
+                        <MapPin className="h-4 w-4" /> {property.location || property.address}
+                      </div>
+                    )}
+                    {summaryLine && (
+                      <div className="mt-2 text-sm text-muted-foreground font-body">{summaryLine}</div>
+                    )}
                   </div>
-                )}
-                <div className="mt-4 text-3xl font-display font-bold text-secondary">
-                  {formatPrice(property.price)}
-                  {property.status === "For Rent" && <span className="text-base font-body text-muted-foreground">/month</span>}
+                  <div className="text-2xl md:text-3xl font-display font-bold text-secondary">
+                    {formatPrice(property.price)}
+                    {property.status === "For Rent" && <span className="text-base font-body text-muted-foreground">/month</span>}
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap gap-4 mt-4 font-body text-sm text-muted-foreground">
-                  {property.bedrooms && (
-                    <span className="flex items-center gap-1 bg-muted px-3 py-1.5 rounded-md"><BedDouble className="h-4 w-4" /> {property.bedrooms} Bedrooms</span>
-                  )}
-                  {property.bathrooms && (
-                    <span className="flex items-center gap-1 bg-muted px-3 py-1.5 rounded-md"><Bath className="h-4 w-4" /> {property.bathrooms} Bathrooms</span>
-                  )}
-                  {property.area && (
-                    <span className="flex items-center gap-1 bg-muted px-3 py-1.5 rounded-md"><Maximize className="h-4 w-4" /> {property.area} sq.ft</span>
-                  )}
+                <div className="mt-6 border-t border-border pt-6">
+                  <h3 className="text-lg font-display font-semibold text-foreground mb-4">Details</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm font-body">
+                    {detailItems.map((item) => (
+                      <div key={item.label} className="flex items-center justify-between gap-3 border-b border-border pb-2">
+                        <span className="text-muted-foreground">{item.label}</span>
+                        <span className="text-card-foreground font-medium text-right">{item.value}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 {property.description && (
@@ -283,96 +499,14 @@ const PropertyDetail = () => {
               </div>
 
               <div className="space-y-4">
-                <Input placeholder="Your Name *" value={name} onChange={(e) => setName(e.target.value)} className="font-body" />
-                <Input placeholder="Phone Number *" value={phone} onChange={(e) => setPhone(e.target.value)} className="font-body" />
-                <Input placeholder="Email (optional)" value={email} onChange={(e) => setEmail(e.target.value)} className="font-body" />
-
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" className={cn("w-full justify-start font-body", !selectedDate && "text-muted-foreground")}>
-                      <Clock className="h-4 w-4 mr-2" />
-                      {selectedDate ? format(selectedDate, "PPP") : "Select Visit Date *"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar mode="single" selected={selectedDate} onSelect={setSelectedDate}
-                      disabled={(date) => date < new Date()} className="p-3 pointer-events-auto" />
-                  </PopoverContent>
-                </Popover>
-
-                <div>
-                  <p className="text-sm font-body font-medium text-card-foreground mb-2">Select Time Slot *</p>
-                  <p className="text-xs text-muted-foreground font-body mb-2">Morning: 10 AM – 1 PM</p>
-                  <div className="grid grid-cols-3 gap-1.5 mb-3">
-                    {TIME_SLOTS_MORNING.map((slot) => (
-                      <button key={slot} onClick={() => setSelectedSlot(slot)}
-                        className={cn("text-xs py-1.5 rounded font-body transition-colors",
-                          selectedSlot === slot ? "bg-secondary text-secondary-foreground" : "bg-muted text-muted-foreground hover:bg-secondary/20"
-                        )}>
-                        {slot}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-xs text-muted-foreground font-body mb-2">Evening: 4 PM – 10 PM</p>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {TIME_SLOTS_EVENING.map((slot) => (
-                      <button key={slot} onClick={() => setSelectedSlot(slot)}
-                        className={cn("text-xs py-1.5 rounded font-body transition-colors",
-                          selectedSlot === slot ? "bg-secondary text-secondary-foreground" : "bg-muted text-muted-foreground hover:bg-secondary/20"
-                        )}>
-                        {slot}
-                      </button>
-                    ))}
-                  </div>
+                <div className="text-sm text-muted-foreground font-body">
+                  Book using the full booking form to select a slot and upload payment proof.
                 </div>
-
-                {allProperties.length > 0 && (
-                  <div>
-                    <p className="text-sm font-body font-medium text-card-foreground mb-2">
-                      Add More Properties (Max {MAX_PROPERTIES_PER_VISIT - 1} more)
-                    </p>
-                    <div className="max-h-32 overflow-y-auto space-y-1.5">
-                      {allProperties.slice(0, 10).map((p) => (
-                        <button key={p.id} onClick={() => toggleExtra(p.id)}
-                          className={cn("w-full text-left text-xs p-2 rounded font-body transition-colors",
-                            extraPropertyIds.includes(p.id) ? "bg-secondary/20 text-secondary-foreground" : "bg-muted/50 text-muted-foreground hover:bg-muted"
-                          )}>
-                          {p.title}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <Textarea placeholder="Any message or requirements..." value={message} onChange={(e) => setMessage(e.target.value)} className="font-body" />
-
-                <div>
-                  <p className="text-sm font-body font-medium text-card-foreground mb-2">Payment Method</p>
-                  <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                    <SelectTrigger className="font-body">
-                      <SelectValue placeholder="Select payment method" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="online">Pay Online (UPI / Card / Net Banking)</SelectItem>
-                      <SelectItem value="cash_upi_on_visit">Cash/UPI at Site Visit</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="bg-muted rounded-md p-3 text-xs font-body text-muted-foreground">
-                  <p className="font-medium text-card-foreground mb-1">₹{VISIT_CHARGE} Visit Charge Applicable</p>
-                  <p>You can visit up to {MAX_PROPERTIES_PER_VISIT} properties. Selected: {selectedPropertyIds.length}</p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <input id="agree-pay" type="checkbox" checked={agreeToPay} onChange={(e) => setAgreeToPay(e.target.checked)} />
-                  <label htmlFor="agree-pay" className="text-sm font-body">I agree to pay ₹{VISIT_CHARGE} as booking charge</label>
-                </div>
-
-                <Button onClick={handleBooking} className="w-full bg-secondary text-secondary-foreground hover:bg-secondary/90 font-body">
-                  Book Site Visit
-                </Button>
-
+                <Link to={`/book?propertyId=${property.id}`}>
+                  <Button className="w-full bg-secondary text-secondary-foreground hover:bg-secondary/90 font-body">
+                    Book Site Visit
+                  </Button>
+                </Link>
                 <div className="text-center">
                   <ContactMenu phone={PHONE_NUMBER} className="inline-block">
                     <Button variant="ghost" className="text-sm font-body text-secondary"><Phone className="h-3.5 w-3.5 mr-1" /> {PHONE_NUMBER}</Button>

@@ -37,6 +37,7 @@ const AddEditProperty = () => {
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const [replaceIndex, setReplaceIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(!!id);
+  const [errors, setErrors] = useState<{ title?: string; price?: string; location?: string }>({});
   const isEdit = !!id;
 
   useEffect(() => {
@@ -210,10 +211,17 @@ const AddEditProperty = () => {
       toast({ title: "Upload in progress", description: "Please wait for image upload to finish before saving.", variant: "destructive" });
       return;
     }
-    if (!form.title || !form.location || !form.price) {
-      toast({ title: "Fill required fields", variant: "destructive" });
+    const nextErrors: { title?: string; price?: string; location?: string } = {};
+    if (!form.title.trim()) nextErrors.title = "Title is required";
+    if (!form.location.trim()) nextErrors.location = "Location is required";
+    if (!form.price || form.price <= 0) nextErrors.price = "Enter a valid price";
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      const firstError = Object.values(nextErrors).find(Boolean);
+      toast({ title: "Please fix the highlighted fields", description: firstError, variant: "destructive" });
       return;
     }
+
     const payload = {
       title: form.title,
       type: form.type,
@@ -294,7 +302,11 @@ const AddEditProperty = () => {
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
             <Label className="font-body">Title *</Label>
-            <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="font-body" />
+            <Input value={form.title} onChange={(e) => {
+              setForm({ ...form, title: e.target.value });
+              if (errors.title) setErrors((prev) => ({ ...prev, title: undefined }));
+            }} className="font-body" />
+            {errors.title && <p className="mt-1 text-xs text-destructive">{errors.title}</p>}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -337,7 +349,11 @@ const AddEditProperty = () => {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label className="font-body">Price (₹) *</Label>
-              <Input type="number" value={form.price || ""} onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} className="font-body" />
+              <Input type="number" value={form.price || ""} onChange={(e) => {
+                setForm({ ...form, price: Number(e.target.value) });
+                if (errors.price) setErrors((prev) => ({ ...prev, price: undefined }));
+              }} className="font-body" />
+              {errors.price && <p className="mt-1 text-xs text-destructive">{errors.price}</p>}
             </div>
             <div>
               <Label className="font-body">Area (sq.ft)</Label>
@@ -384,7 +400,11 @@ const AddEditProperty = () => {
 
           <div>
             <Label className="font-body">Location *</Label>
-            <Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} className="font-body" />
+            <Input value={form.location} onChange={(e) => {
+              setForm({ ...form, location: e.target.value });
+              if (errors.location) setErrors((prev) => ({ ...prev, location: undefined }));
+            }} className="font-body" />
+            {errors.location && <p className="mt-1 text-xs text-destructive">{errors.location}</p>}
           </div>
           <div>
             <Label className="font-body">Full Address</Label>

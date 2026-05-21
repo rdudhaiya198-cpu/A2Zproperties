@@ -10,10 +10,12 @@ import Footer from "@/components/Footer";
 import { db } from "@/integrations/firebase/client";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { motion } from "framer-motion";
+import { isValidPhone } from "@/lib/validation";
 
 const Inquiry = () => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState<{ name?: string; phone?: string }>({});
   const [form, setForm] = useState({
     name: "",
     phone: "",
@@ -26,18 +28,24 @@ const Inquiry = () => {
 
   const handleChange = (field: string, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+    if (errors[field as "name" | "phone"]) {
+      setErrors((prev) => ({ ...prev, [field]: undefined }));
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.name.trim() || !form.phone.trim()) {
-      toast({ title: "Name and Phone are required", variant: "destructive" });
+    const nextErrors: { name?: string; phone?: string } = {};
+    if (!form.name.trim()) nextErrors.name = "Name is required";
+    if (!form.phone.trim()) nextErrors.phone = "Phone number is required";
+    else if (!isValidPhone(form.phone)) nextErrors.phone = "Enter a valid phone number";
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      const firstError = Object.values(nextErrors).find(Boolean);
+      toast({ title: "Please fix the highlighted fields", description: firstError, variant: "destructive" });
       return;
     }
-    if (form.phone.length < 10) {
-      toast({ title: "Please enter a valid phone number", variant: "destructive" });
-      return;
-    }
+
     setLoading(true);
     try {
       if (!db) throw new Error("Firebase not configured. Set VITE_FIREBASE_* env vars.");
@@ -117,14 +125,20 @@ const Inquiry = () => {
           </div>
 
           <form onSubmit={handleSubmit} className="bg-card rounded-lg p-6 shadow-card space-y-4">
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Your Name *" value={form.name} onChange={(e) => handleChange("name", e.target.value)} className="pl-9 font-body" required />
+            <div>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input placeholder="Your Name *" value={form.name} onChange={(e) => handleChange("name", e.target.value)} className="pl-9 font-body" />
+              </div>
+              {errors.name && <p className="mt-1 text-xs text-destructive">{errors.name}</p>}
             </div>
 
-            <div className="relative">
-              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Phone Number *" value={form.phone} onChange={(e) => handleChange("phone", e.target.value)} className="pl-9 font-body" required />
+            <div>
+              <div className="relative">
+                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input placeholder="Phone Number *" value={form.phone} onChange={(e) => handleChange("phone", e.target.value)} className="pl-9 font-body" />
+              </div>
+              {errors.phone && <p className="mt-1 text-xs text-destructive">{errors.phone}</p>}
             </div>
 
             <div className="relative">

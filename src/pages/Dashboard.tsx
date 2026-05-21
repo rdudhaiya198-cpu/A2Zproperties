@@ -181,6 +181,16 @@ const Dashboard = () => {
       .join(", ");
   };
 
+  const getPaymentLabel = (booking: any) => {
+    const method = booking?.payment?.method || "-";
+    const status = booking?.payment?.status || "-";
+    const amount = booking?.payment?.amount ?? booking?.charge ?? null;
+    const methodLabel = method === "online" ? "Online" : method === "cash_upi_on_visit" ? "Cash at site Visit" : method;
+    const statusLabel = typeof status === "string" ? status : String(status);
+    const amountLabel = typeof amount === "number" ? formatPrice(amount) : "-";
+    return `${methodLabel} • ${statusLabel} • ${amountLabel}`;
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
@@ -284,6 +294,7 @@ const Dashboard = () => {
                       <th className="text-left p-3 text-muted-foreground">Phone</th>
                       <th className="text-left p-3 text-muted-foreground hidden md:table-cell">Date</th>
                       <th className="text-left p-3 text-muted-foreground hidden md:table-cell">Slot</th>
+                      <th className="text-left p-3 text-muted-foreground hidden md:table-cell">Payment</th>
                       <th className="text-left p-3 text-muted-foreground hidden md:table-cell">Properties</th>
                       <th className="text-left p-3 text-muted-foreground">Status</th>
                       <th className="text-right p-3 text-muted-foreground">Actions</th>
@@ -305,6 +316,9 @@ const Dashboard = () => {
                           <div className="md:hidden text-xs text-muted-foreground mt-1">
                             Properties: {getBookedPropertyNames(b.property_ids || [])}
                           </div>
+                          <div className="md:hidden text-xs text-muted-foreground mt-1">
+                            Payment: {getPaymentLabel(b)}
+                          </div>
                         </td>
                           <td className="p-3">
                             <ContactMenu phone={b.phone} className="inline-block">
@@ -313,6 +327,7 @@ const Dashboard = () => {
                         </td>
                         <td className="p-3 hidden md:table-cell">{b.visit_date}</td>
                         <td className="p-3 hidden md:table-cell">{b.time_slot}</td>
+                        <td className="p-3 hidden md:table-cell text-xs text-muted-foreground">{getPaymentLabel(b)}</td>
                         <td className="p-3 hidden md:table-cell">
                           <div className="max-w-[320px] text-xs text-muted-foreground line-clamp-2">
                             {getBookedPropertyNames(b.property_ids || [])}
@@ -361,7 +376,7 @@ const Dashboard = () => {
                       </tr>
                     ))}
                     {bookings.length === 0 && (
-                      <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">No bookings yet</td></tr>
+                      <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">No bookings yet</td></tr>
                     )}
                   </tbody>
                 </table>

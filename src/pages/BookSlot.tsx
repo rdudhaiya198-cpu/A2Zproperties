@@ -10,8 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { storage, db } from "@/integrations/firebase/client";
 import { doc as fsDoc, getDoc as fsGetDoc, addDoc, collection, serverTimestamp, getDocs as fsGetDocs, query as fsQuery, where as fsWhere } from "firebase/firestore";
-import { TIME_SLOTS_MORNING, TIME_SLOTS_EVENING, VISIT_CHARGE, MAX_PROPERTIES_PER_VISIT } from "@/lib/data";
+import { TIME_SLOTS_MORNING, TIME_SLOTS_EVENING, VISIT_CHARGE, MAX_PROPERTIES_PER_VISIT, UPI_ID, GOOGLE_SHEET_URL } from "@/lib/data";
 import { openBookingWhatsApp } from "@/lib/whatsapp";
+import { isValidPhone } from "@/lib/validation";
 
 export default function BookSlot() {
   const [search] = useSearchParams();
@@ -29,6 +30,11 @@ export default function BookSlot() {
   const [todayMin, setTodayMin] = useState("");
   const [agree, setAgree] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("cash_upi_on_visit");
+  const [paymentScreenshot, setPaymentScreenshot] = useState<File | null>(null);
+  const [paymentScreenshotPreview, setPaymentScreenshotPreview] = useState<string | null>(null);
+  const [uploadingScreenshot, setUploadingScreenshot] = useState(false);
+  const [showQr, setShowQr] = useState(false);
+  const [errors, setErrors] = useState<{ name?: string; phone?: string; date?: string; slot?: string; caste?: string; agree?: string; screenshot?: string }>({});
   const { toast } = useToast();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -49,6 +55,25 @@ export default function BookSlot() {
 
   const selectedPropertyIds = propertyId ? [propertyId, ...extraPropertyIds] : [];
   const brokerage = property && (property.status === "For Rent" || (property.listed_by && String(property.status).toLowerCase().includes("rent"))) ? Number(property.price || 0) : 0;
+  const totalDueNow = VISIT_CHARGE + (brokerage || 0);
+  const upiPayUrl = (() => {
+    const note = property?.title ? `Site Visit - ${property.title}` : "Site Visit Booking";
+    const params = new URLSearchParams({
+      pa: UPI_ID,
+      pn: "ATOZ PROPERTIES",
+      am: String(totalDueNow),
+      cu: "INR",
+      tn: note,
+    });
+    return `upi://pay?${params.toString()}`;
+  })();
+
+  const isMobile = (() => {
+    if (typeof navigator === "undefined") return false;
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  })();
+
+  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(upiPayUrl)}`;
 
   useEffect(() => {
     if (!propertyId) return;
@@ -121,6 +146,74 @@ export default function BookSlot() {
     const d = String(nowIst.getUTCDate()).padStart(2, "0");
     setTodayMin(`${y}-${m}-${d}`);
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (paymentScreenshotPreview) URL.revokeObjectURL(paymentScreenshotPreview);
+    };
+  }, [paymentScreenshotPreview]);
+
+  useEffect(() => {
+    if (paymentMethod !== "online") {
+      setPaymentScreenshot(null);
+      setPaymentScreenshotPreview(null);
+      setShowQr(false);
+      if (errors.screenshot) setErrors((prev) => ({ ...prev, screenshot: undefined }));
+    }
+  }, [paymentMethod, errors.screenshot]);
+
+  const handlePaymentScreenshotChange = (file: File | null) => {
+    if (!file) {
+      setPaymentScreenshot(null);
+      setPaymentScreenshotPreview(null);
+      return;
+    }
+    setPaymentScreenshot(file);
+    if (errors.screenshot) setErrors((prev) => ({ ...prev, screenshot: undefined }));
+    const nextPreview = URL.createObjectURL(file);
+    setPaymentScreenshotPreview(nextPreview);
+  };
+
+  const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+
+  const submitPaymentScreenshot = async (bookingId?: string) => {
+    if (!paymentScreenshot) return;
+    setUploadingScreenshot(true);
+    try {
+      const base64 = await fileToBase64(paymentScreenshot);
+      const formData = new FormData();
+      formData.append("bookingId", bookingId || "");
+      formData.append("name", name || "");
+      formData.append("phone", phone || "");
+      formData.append("amount", String(totalDueNow));
+      formData.append("upi", UPI_ID);
+      formData.append("propertyId", propertyId || "");
+      formData.append("propertyTitle", property?.title || "");
+      formData.append("visitDate", date || "");
+      formData.append("timeSlot", slot || "");
+      formData.append("paymentMethod", paymentMethod);
+      formData.append("screenshotName", paymentScreenshot.name);
+      formData.append("screenshot", base64);
+      formData.append("timestamp", new Date().toISOString());
+
+      try {
+        const res = await fetch(GOOGLE_SHEET_URL, { method: "POST", body: formData });
+        if (res.type !== "opaque" && !res.ok) throw new Error(`Sheet error ${res.status}`);
+      } catch (err) {
+        await fetch(GOOGLE_SHEET_URL, { method: "POST", mode: "no-cors", body: formData });
+      }
+    } catch (err: any) {
+      console.warn("Failed to upload payment screenshot", err);
+      toast({ title: "Screenshot upload failed", description: "We will verify manually if needed.", variant: "destructive" });
+    } finally {
+      setUploadingScreenshot(false);
+    }
+  };
 
   // fetch already booked slots for selected properties + date
   useEffect(() => {
@@ -203,11 +296,21 @@ export default function BookSlot() {
   }, [date, propertyId]);
 
   const handleBook = async () => {
-    if (!name || !phone || !date || !slot || !caste) return toast({ title: "Fill required", description: "Name, phone, date, time and caste required", variant: "destructive" });
-    // compute brokerage if this is a rental property
-    const brokerage = property && (property.status === "For Rent" || (property.listed_by && String(property.status).toLowerCase().includes("rent"))) ? Number(property.price || 0) : 0;
-    const totalDueNow = VISIT_CHARGE + (brokerage || 0);
-    if (!agree) return toast({ title: "Payment required", description: `Please agree to pay ₹${VISIT_CHARGE}${brokerage ? ` + ₹${brokerage} brokerage (payable 100% at token)` : ""}`, variant: "destructive" });
+    const nextErrors: { name?: string; phone?: string; date?: string; slot?: string; caste?: string; agree?: string; screenshot?: string } = {};
+    if (!name.trim()) nextErrors.name = "Name is required";
+    if (!phone.trim()) nextErrors.phone = "Phone number is required";
+    else if (!isValidPhone(phone)) nextErrors.phone = "Enter a valid phone number";
+    if (!date) nextErrors.date = "Visit date is required";
+    if (!slot) nextErrors.slot = "Please select a time slot";
+    if (!caste.trim()) nextErrors.caste = "Caste / Community is required";
+    if (paymentMethod === "online" && !paymentScreenshot) nextErrors.screenshot = "Payment screenshot is required";
+    if (!agree) nextErrors.agree = "You must agree to the booking charge";
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      const firstError = Object.values(nextErrors).find(Boolean);
+      toast({ title: "Please fix the highlighted fields", description: firstError, variant: "destructive" });
+      return;
+    }
     try {
       if (!db) throw new Error("Firebase not configured");
 
@@ -258,13 +361,17 @@ export default function BookSlot() {
         brokerage: brokerage || 0,
         payment: {
           amount: totalDueNow,
-          status: "pending",
+          status: paymentMethod === "online" ? "submitted" : "pending",
           method: paymentMethod,
           breakdown: { visit: VISIT_CHARGE, brokerage: brokerage || 0 },
         },
         status: "pending",
         createdAt: serverTimestamp(),
       });
+
+      if (paymentMethod === "online") {
+        await submitPaymentScreenshot(bkRef.id);
+      }
 
       const allKnown = [property, ...relatedProperties].filter(Boolean);
       const propertyTitles = selectedPropertyIds.map((pid) => allKnown.find((p) => p.id === pid)?.title || pid);
@@ -332,29 +439,41 @@ export default function BookSlot() {
         )}
 
         <div className="space-y-3">
-          <Input placeholder="Your Name" value={name} onChange={(e) => setName(e.target.value)} />
-          <Input placeholder="Phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
-          <div className="relative">
-            <Input type="date" className="pr-10" value={date} min={todayMin} onChange={(e) => setDate(e.target.value)} aria-label="Choose visit date" />
-            {!date && (
-              <span className="absolute left-3 top-2 pointer-events-none text-muted-foreground text-sm block sm:hidden">Choose date</span>
-            )}
-          </div>
-          {!date && (
-            <div className="text-xs text-muted-foreground mt-1">Choose a visit date (tap to open date picker)</div>
-          )}
-          <Input placeholder="Caste / Community" value={caste} onChange={(e) => setCaste(e.target.value)} />
           <div>
-            <div className="text-sm font-medium mb-2">Payment Method</div>
-            <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select payment method" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="online">Pay Online (UPI / Card / Net Banking)</SelectItem>
-                <SelectItem value="cash_upi_on_visit">Cash/UPI at Site Visit</SelectItem>
-              </SelectContent>
-            </Select>
+            <Input placeholder="Your Name" value={name} onChange={(e) => {
+              setName(e.target.value);
+              if (errors.name) setErrors((prev) => ({ ...prev, name: undefined }));
+            }} />
+            {errors.name && <p className="mt-1 text-xs text-destructive">{errors.name}</p>}
+          </div>
+          <div>
+            <Input placeholder="Phone" value={phone} onChange={(e) => {
+              setPhone(e.target.value);
+              if (errors.phone) setErrors((prev) => ({ ...prev, phone: undefined }));
+            }} />
+            {errors.phone && <p className="mt-1 text-xs text-destructive">{errors.phone}</p>}
+          </div>
+          <div>
+            <div className="relative">
+              <Input type="date" className="pr-10" value={date} min={todayMin} onChange={(e) => {
+                setDate(e.target.value);
+                if (errors.date) setErrors((prev) => ({ ...prev, date: undefined }));
+              }} aria-label="Choose visit date" />
+              {!date && (
+                <span className="absolute left-3 top-2 pointer-events-none text-muted-foreground text-sm block sm:hidden">Choose date</span>
+              )}
+            </div>
+            {!date && (
+              <div className="text-xs text-muted-foreground mt-1">Choose a visit date (tap to open date picker)</div>
+            )}
+            {errors.date && <p className="mt-1 text-xs text-destructive">{errors.date}</p>}
+          </div>
+          <div>
+            <Input placeholder="Caste / Community" value={caste} onChange={(e) => {
+              setCaste(e.target.value);
+              if (errors.caste) setErrors((prev) => ({ ...prev, caste: undefined }));
+            }} />
+            {errors.caste && <p className="mt-1 text-xs text-destructive">{errors.caste}</p>}
           </div>
           {relatedProperties.length > 0 && (
             <div className="rounded-md border border-border p-3">
@@ -411,7 +530,7 @@ export default function BookSlot() {
               const isSelected = slot === s;
               const selectedClass = "bg-secondary text-secondary-foreground";
               return (
-                <button key={s} type="button" onClick={() => { if (!disabled) setSlot(s); }} disabled={disabled} className={`text-xs py-1 rounded ${isSelected ? selectedClass : bgClass} ${disabled?"opacity-60 cursor-not-allowed":""}`}>
+                <button key={s} type="button" onClick={() => { if (!disabled) { setSlot(s); if (errors.slot) setErrors((prev) => ({ ...prev, slot: undefined })); } }} disabled={disabled} className={`text-xs py-1 rounded ${isSelected ? selectedClass : bgClass} ${disabled?"opacity-60 cursor-not-allowed":""}`}>
                   <div className="flex items-center justify-center gap-2">
                     <span>{s}</span>
                     {takenCount > 0 && <span className="text-[10px] font-medium">({takenCount})</span>}
@@ -423,10 +542,59 @@ export default function BookSlot() {
               );
             })}
           </div>
+          {errors.slot && <p className="mt-1 text-xs text-destructive">{errors.slot}</p>}
+          <div>
+            <div className="text-sm font-medium mb-2">Payment Method</div>
+            <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select payment method" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="online">Pay Online (UPI / Card / Net Banking)</SelectItem>
+                <SelectItem value="cash_upi_on_visit">Cash at site Visit</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {paymentMethod === "online" && (
+            <div className="rounded-md border border-border p-3 space-y-2">
+              <div className="text-sm font-medium">Pay Now (UPI)</div>
+              <div className="text-xs text-muted-foreground">UPI ID: {UPI_ID}</div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  if (isMobile) {
+                    window.location.href = upiPayUrl;
+                  } else {
+                    setShowQr(true);
+                  }
+                }}
+              >
+                {isMobile ? "Pay Now" : "Show QR"}
+              </Button>
+              {!isMobile && showQr && (
+                <div className="flex flex-col items-center gap-2 pt-2">
+                  <img src={qrSrc} alt="UPI QR" className="h-48 w-48 rounded border border-border bg-white p-2" />
+                  <div className="text-xs text-muted-foreground">Scan this QR with any UPI app to pay ₹{totalDueNow}.</div>
+                </div>
+              )}
+              <div className="text-xs text-muted-foreground">After payment, upload a screenshot for verification.</div>
+              <Input type="file" accept="image/*" onChange={(e) => handlePaymentScreenshotChange(e.target.files?.[0] || null)} />
+              {paymentScreenshotPreview && (
+                <img src={paymentScreenshotPreview} alt="Payment screenshot" className="w-full max-h-48 object-contain rounded border border-border" />
+              )}
+              {errors.screenshot && <p className="text-xs text-destructive">{errors.screenshot}</p>}
+            </div>
+          )}
           <label className="inline-flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
-            <span>I agree to pay ₹200 booking charge</span>
+            <input type="checkbox" checked={agree} onChange={(e) => {
+              setAgree(e.target.checked);
+              if (errors.agree) setErrors((prev) => ({ ...prev, agree: undefined }));
+            }} />
+            <span>I agree to pay ₹200 booking charge (non-refundable)</span>
           </label>
+          {errors.agree && <p className="mt-1 text-xs text-destructive">{errors.agree}</p>}
           {brokerage > 0 && (
             <div className="text-sm text-muted-foreground mt-2">
               one rent brokarge charges applicable 100% at token time
@@ -434,7 +602,7 @@ export default function BookSlot() {
           )}
 
           <div className="flex justify-end">
-            <Button onClick={handleBook} className="bg-primary text-primary-foreground">Confirm Site Visit</Button>
+            <Button onClick={handleBook} disabled={uploadingScreenshot} className="bg-primary text-primary-foreground">Confirm Site Visit</Button>
           </div>
         </div>
       </div>
