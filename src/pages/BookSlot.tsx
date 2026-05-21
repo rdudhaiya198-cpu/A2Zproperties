@@ -55,7 +55,7 @@ export default function BookSlot() {
 
   const selectedPropertyIds = propertyId ? [propertyId, ...extraPropertyIds] : [];
   const brokerage = property && (property.status === "For Rent" || (property.listed_by && String(property.status).toLowerCase().includes("rent"))) ? Number(property.price || 0) : 0;
-  const totalDueNow = VISIT_CHARGE + (brokerage || 0);
+  const totalDueNow = VISIT_CHARGE;
   const upiPayUrl = (() => {
     const note = property?.title ? `Site Visit - ${property.title}` : "Site Visit Booking";
     const params = new URLSearchParams({
@@ -363,7 +363,7 @@ export default function BookSlot() {
           amount: totalDueNow,
           status: paymentMethod === "online" ? "submitted" : "pending",
           method: paymentMethod,
-          breakdown: { visit: VISIT_CHARGE, brokerage: brokerage || 0 },
+          breakdown: { visit: VISIT_CHARGE },
         },
         status: "pending",
         createdAt: serverTimestamp(),
