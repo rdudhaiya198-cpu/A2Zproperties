@@ -14,6 +14,7 @@ const Properties = () => {
   const [typeFilter, setTypeFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [budgetFilter, setBudgetFilter] = useState("all");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -57,6 +58,17 @@ const Properties = () => {
       return title.includes(q) || loc.includes(q);
     };
 
+    const parsePrice = (p: any) => {
+      const raw = p?.price;
+      if (typeof raw === "number") return raw;
+      if (typeof raw === "string") {
+        const cleaned = raw.replace(/[^0-9.]/g, "");
+        const parsed = Number(cleaned);
+        return Number.isFinite(parsed) ? parsed : NaN;
+      }
+      return NaN;
+    };
+
     const matchType = (p: any) => {
       if (typeFilter === "all") return true;
       const t = (p.type || "").toString().toLowerCase();
@@ -82,9 +94,33 @@ const Properties = () => {
       return true;
     };
 
-    const matched = allProperties.filter((p) => matchSearch(p) && matchType(p) && matchLocation(p) && matchStatus(p));
+    const matchBudget = (p: any) => {
+      if (budgetFilter === "all") return true;
+      const price = parsePrice(p);
+      if (!Number.isFinite(price)) return false;
+
+      if (budgetFilter.endsWith("+")) {
+        const min = Number(budgetFilter.replace("+", ""));
+        if (!Number.isFinite(min)) return true;
+        return price >= min;
+      }
+
+      if (budgetFilter.includes("-")) {
+        const [minRaw, maxRaw] = budgetFilter.split("-");
+        const min = Number(minRaw);
+        const max = Number(maxRaw);
+        if (!Number.isFinite(min) || !Number.isFinite(max)) return true;
+        return price >= min && price <= max;
+      }
+
+      const limit = Number(budgetFilter);
+      if (!Number.isFinite(limit)) return true;
+      return price <= limit;
+    };
+
+    const matched = allProperties.filter((p) => matchSearch(p) && matchType(p) && matchLocation(p) && matchStatus(p) && matchBudget(p));
     return sortFeaturedFirst(matched);
-  }, [allProperties, search, typeFilter, locationFilter, statusFilter]);
+  }, [allProperties, search, typeFilter, locationFilter, statusFilter, budgetFilter]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -126,6 +162,21 @@ const Properties = () => {
               <SelectItem value="all">All Status</SelectItem>
               <SelectItem value="sale">Sale</SelectItem>
               <SelectItem value="rent">Rent</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={budgetFilter} onValueChange={setBudgetFilter}>
+            <SelectTrigger className="w-full sm:w-40 font-body"><SelectValue placeholder="Budget" /></SelectTrigger>
+            <SelectContent className="w-full sm:w-auto">
+              <SelectItem value="all">All Budgets</SelectItem>
+              <SelectItem value="10000-20000">10K - 20K</SelectItem>
+              <SelectItem value="20000-30000">20K - 30K</SelectItem>
+              <SelectItem value="30000-40000">30K - 40K</SelectItem>
+              <SelectItem value="40000-50000">40K - 50K</SelectItem>
+              <SelectItem value="50000-60000">50K - 60K</SelectItem>
+              <SelectItem value="60000-70000">60K - 70K</SelectItem>
+              <SelectItem value="70000-80000">70K - 80K</SelectItem>
+              <SelectItem value="80000-90000">80K - 90K</SelectItem>
+              <SelectItem value="100000+">Above 1L</SelectItem>
             </SelectContent>
           </Select>
         </div>
