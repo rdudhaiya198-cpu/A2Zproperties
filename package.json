@@ -51,6 +51,7 @@
     "date-fns": "^3.6.0",
     "embla-carousel-react": "^8.6.0",
     "firebase": "^10.14.1",
+    "firebase-admin": "^11.10.1",
     "framer-motion": "^12.34.3",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.462.0",
