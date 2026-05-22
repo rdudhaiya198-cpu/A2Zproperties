@@ -9,10 +9,11 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import ContactMenu from "@/components/ContactMenu";
 import { registerAdminFcmToken, onForegroundMessage } from "@/integrations/firebase/fcm";
-import { db } from "@/integrations/firebase/client";
+import { auth, db } from "@/integrations/firebase/client";
 import { doc as fsDoc, deleteDoc, updateDoc, collection, query as fsQuery, orderBy as fsOrderBy, onSnapshot, getDocs as fsGetDocs, writeBatch } from "firebase/firestore";
 import { formatPrice, PHONE_NUMBER } from "@/lib/data";
 import { generateGoogleCalendarUrl } from "@/lib/calendar";
+import { useAuth } from "@/hooks/useAuth";
 
 const statusColors: Record<string, string> = {
   pending: "bg-accent/20 text-accent-foreground",
@@ -26,10 +27,12 @@ const statusColors: Record<string, string> = {
 
 const Dashboard = () => {
   const { toast } = useToast();
+  const { isAdmin, user } = useAuth();
   const [properties, setProperties] = useState<any[]>([]);
   const [bookings, setBookings] = useState<any[]>([]);
   const [inquiries, setInquiries] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [userRoles, setUserRoles] = useState<any[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterProperty, setFilterProperty] = useState<string>("all");
   const [filterDate, setFilterDate] = useState<string>("");
@@ -90,11 +93,19 @@ const Dashboard = () => {
       setNotifications(out);
     }, (err) => console.error("Notifications listener error:", err));
 
+    const rolesQ = fsQuery(collection(db, "roles"));
+    const unsubRoles = onSnapshot(rolesQ, (snap) => {
+      const out: any[] = [];
+      snap.forEach((d) => out.push({ id: d.id, ...d.data() }));
+      setUserRoles(out);
+    }, (err) => console.error("Roles listener error:", err));
+
     return () => {
       unsubProps();
       unsubBookings();
       unsubInquiries();
       unsubNotifs();
+      unsubRoles();
       if (typeof off === 'function') off();
     };
   }, []);
@@ -172,6 +183,53 @@ const Dashboard = () => {
     toast({ title: "Booking deleted" });
   };
 
+  const handleRoleChange = async (id: string, role: string) => {
+    if (!db) {
+      toast({ title: "Error", description: "Firebase not configured", variant: "destructive" });
+      return;
+    }
+    if (!isAdmin) {
+      toast({ title: "Not allowed", description: "Only admins can change roles", variant: "destructive" });
+      return;
+    }
+    try {
+      await updateDoc(fsDoc(db, "roles", id), { role });
+      toast({ title: "Role updated" });
+    } catch (err: any) {
+      toast({ title: "Error", description: String(err?.message || err), variant: "destructive" });
+    }
+  };
+
+  const handleRemoveUser = async (id: string) => {
+    if (!confirm("Remove this user? This will permanently delete their account.")) return;
+    if (!db) {
+      toast({ title: "Error", description: "Firebase not configured", variant: "destructive" });
+      return;
+    }
+    if (!isAdmin) {
+      toast({ title: "Not allowed", description: "Only admins can remove users", variant: "destructive" });
+      return;
+    }
+    try {
+      const token = await auth?.currentUser?.getIdToken();
+      if (!token) throw new Error("Missing auth token");
+      const fnUrl = import.meta.env.VITE_FUNCTIONS_URL || "/api";
+      const resp = await fetch(`${fnUrl.replace(/\/$/, "")}/deleteUser`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ uid: id }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data?.ok) throw new Error(data?.error || "Delete failed");
+      toast({ title: "User deleted" });
+    } catch (err: any) {
+      toast({ title: "Error", description: String(err?.message || err), variant: "destructive" });
+    }
+  };
+
   const pendingBookings = bookings.filter(b => b.status === "pending").length;
   const newInquiries = inquiries.filter(i => i.status === "new").length;
   const getBookedPropertyNames = (propertyIds: string[] = []) => {
@@ -189,6 +247,13 @@ const Dashboard = () => {
     const statusLabel = typeof status === "string" ? status : String(status);
     const amountLabel = typeof amount === "number" ? formatPrice(amount) : "-";
     return `${methodLabel} • ${statusLabel} • ${amountLabel}`;
+  };
+
+  const formatTimestamp = (ts: any) => {
+    if (!ts) return "-";
+    const date = typeof ts?.seconds === "number" ? new Date(ts.seconds * 1000) : new Date(ts);
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleString();
   };
 
   return (
@@ -258,6 +323,7 @@ const Dashboard = () => {
               {newInquiries > 0 && <span className="ml-1 bg-destructive text-destructive-foreground text-xs rounded-full px-1.5">{newInquiries}</span>}
             </TabsTrigger>
             <TabsTrigger value="properties">Properties ({properties.length})</TabsTrigger>
+            <TabsTrigger value="users">Users ({userRoles.length})</TabsTrigger>
           </TabsList>
 
           <TabsContent value="bookings">
@@ -478,6 +544,62 @@ const Dashboard = () => {
                     ))}
                     {properties.length === 0 && (
                       <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No properties yet</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="users">
+            <div className="bg-card rounded-lg shadow-card overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm font-body">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="text-left p-3 text-muted-foreground">Name</th>
+                      <th className="text-left p-3 text-muted-foreground">Email</th>
+                      <th className="text-left p-3 text-muted-foreground">Role</th>
+                      <th className="text-left p-3 text-muted-foreground hidden md:table-cell">Last Login</th>
+                      <th className="text-left p-3 text-muted-foreground hidden lg:table-cell">Created</th>
+                      <th className="text-right p-3 text-muted-foreground">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {userRoles.map((u) => (
+                      <tr key={u.id} className="border-t border-border hover:bg-muted/50 transition-colors">
+                        <td className="p-3 text-card-foreground font-medium">
+                          {u.full_name || u.name || (u.email ? String(u.email).split("@")[0] : "-")}
+                        </td>
+                        <td className="p-3 text-muted-foreground">{u.email || "-"}</td>
+                        <td className="p-3">
+                          <select
+                            value={u.role || "user"}
+                            onChange={(e) => handleRoleChange(u.id, e.target.value)}
+                            className="px-2 py-1 rounded border"
+                            disabled={!isAdmin}
+                          >
+                            <option value="user">User</option>
+                            <option value="admin">Admin</option>
+                          </select>
+                        </td>
+                        <td className="p-3 hidden md:table-cell text-muted-foreground">{formatTimestamp(u.lastLogin)}</td>
+                        <td className="p-3 hidden lg:table-cell text-muted-foreground">{formatTimestamp(u.createdAt)}</td>
+                        <td className="p-3 text-right">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleRemoveUser(u.id)}
+                            disabled={!isAdmin || (user?.id && u.id === user.id)}
+                            title={user?.id && u.id === user.id ? "Cannot delete yourself" : "Delete user"}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                    {userRoles.length === 0 && (
+                      <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No users yet</td></tr>
                     )}
                   </tbody>
                 </table>

@@ -28,6 +28,37 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  const ensureRoleDoc = async (fbUser: FbUser) => {
+    if (!db) return { role: "user" };
+    const roleRef = doc(db, "roles", fbUser.uid);
+    const roleSnap = await getDoc(roleRef);
+    const email = fbUser.email ?? null;
+    const fullName = fbUser.displayName ?? null;
+
+    if (!roleSnap.exists()) {
+      await setDoc(roleRef, {
+        role: "user",
+        email,
+        full_name: fullName,
+        createdAt: serverTimestamp(),
+        lastLogin: serverTimestamp(),
+      });
+      return { role: "user" };
+    }
+
+    await setDoc(
+      roleRef,
+      {
+        email,
+        full_name: fullName,
+        lastLogin: serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    return roleSnap.data();
+  };
+
   const checkAdmin = async (uid: string) => {
     try {
       const roleDoc = await getDoc(doc(db, "roles", uid));
@@ -61,7 +92,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const unsub = onAuthStateChanged(auth, async (fbUser: FbUser | null) => {
       if (fbUser) {
         setUser({ id: fbUser.uid, email: fbUser.email ?? null, full_name: fbUser.displayName ?? null });
-        await checkAdmin(fbUser.uid);
+        try {
+          const roleData = await ensureRoleDoc(fbUser);
+          setIsAdmin(roleData?.role === "admin");
+        } catch (err) {
+          await checkAdmin(fbUser.uid);
+        }
       } else {
         setUser(null);
         setIsAdmin(false);
@@ -84,7 +120,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           await setDoc(doc(db, "roles", userCredential.user.uid), {
             role: "user",
             email,
+            full_name: fullName,
             createdAt: serverTimestamp(),
+            lastLogin: serverTimestamp(),
           });
         } catch (err) {
           // Non-fatal: role document creation failed

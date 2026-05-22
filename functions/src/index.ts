@@ -7,26 +7,45 @@ import path from 'path';
 import multer from 'multer';
 import { v2 as cloudinary } from 'cloudinary';
 import stream from 'stream';
-// import * as functions from 'firebase-functions';
+import * as functions from 'firebase-functions';
 
 // Try to initialize firebase-admin. In production (Cloud Functions) Application Default
 // credentials will be used. For local testing you can set GOOGLE_APPLICATION_CREDENTIALS
 // or place a serviceAccountKey.json next to this file.
 try {
   if (!admin.apps.length) {
-    try {
-      admin.initializeApp();
-      console.log('Initialized firebase-admin with application default credentials');
-    } catch (e) {
-      // fallback to local service account if present
-      const saPath = path.join(__dirname, 'serviceAccountKey.json');
-      if (fs.existsSync(saPath)) {
+    let initialized = false;
+
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      try {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+        console.log('Initialized firebase-admin with FIREBASE_SERVICE_ACCOUNT');
+        initialized = true;
+      } catch (err) {
+        console.warn('Failed to parse FIREBASE_SERVICE_ACCOUNT', err);
+      }
+    }
+
+    if (!initialized) {
+      const saCandidates = [
+        path.join(process.cwd(), 'serviceAccountKey.json'),
+        path.join(process.cwd(), 'functions', 'serviceAccountKey.json'),
+        path.join(__dirname, 'serviceAccountKey.json'),
+      ];
+
+      const saPath = saCandidates.find((p) => fs.existsSync(p));
+      if (saPath) {
         const serviceAccount = require(saPath);
         admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-        console.log('Initialized firebase-admin with local service account');
-      } else {
-        console.warn('firebase-admin not initialized: no credentials found');
+        console.log('Initialized firebase-admin with local service account:', saPath);
+        initialized = true;
       }
+    }
+
+    if (!initialized) {
+      admin.initializeApp();
+      console.log('Initialized firebase-admin with application default credentials');
     }
   }
 } catch (err) {
@@ -36,6 +55,24 @@ try {
 const app = express();
 app.use(cors({ origin: true }));
 app.use(bodyParser.json());
+
+const getBearerToken = (req: express.Request) => {
+  const authHeader = String(req.headers.authorization || "");
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1] : null;
+};
+
+const assertAdmin = async (req: express.Request) => {
+  if (!admin.apps.length) throw new Error("firebase-admin not initialized");
+  const token = getBearerToken(req);
+  if (!token) throw new Error("Missing auth token");
+  const decoded = await admin.auth().verifyIdToken(token);
+  const db = admin.firestore();
+  const roleSnap = await db.collection("roles").doc(decoded.uid).get();
+  const role = roleSnap.exists ? roleSnap.data()?.role : null;
+  if (role !== "admin") throw new Error("Not authorized");
+  return { uid: decoded.uid, email: decoded.email || null };
+};
 
 // Health
 app.get('/health', (_req, res) => res.json({ ok: true }));
@@ -54,6 +91,44 @@ app.post('/confirmBooking', async (req, res) => {
   // TODO: verify admin (via Firebase Auth token / roles), set booking.status='confirmed'
   // TODO: create Google Calendar event or generate ICS and attach to booking
   res.json({ ok: true });
+});
+
+// Delete user - admin only
+app.post('/deleteUser', async (req, res) => {
+  try {
+    const requester = await assertAdmin(req);
+    const { uid } = req.body || {};
+    if (!uid || typeof uid !== "string") return res.status(400).json({ ok: false, error: "Missing uid" });
+    if (uid === requester.uid) return res.status(400).json({ ok: false, error: "Cannot delete yourself" });
+    if (!admin.apps.length) return res.status(500).json({ ok: false, error: "firebase-admin not initialized" });
+    const db = admin.firestore();
+    let targetEmail: string | null = null;
+    try {
+      const userRecord = await admin.auth().getUser(uid);
+      targetEmail = userRecord.email || null;
+    } catch (err) {
+      // ignore missing user email
+    }
+    try {
+      await admin.auth().deleteUser(uid);
+    } catch (err: any) {
+      if (err?.code !== 'auth/user-not-found') throw err;
+    }
+    await db.collection("roles").doc(uid).delete();
+    await db.collection("admin_audit").add({
+      action: "delete_user",
+      admin_uid: requester.uid,
+      admin_email: requester.email,
+      target_uid: uid,
+      target_email: targetEmail,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return res.json({ ok: true });
+  } catch (err: any) {
+    const msg = String(err?.message || err || "Unknown error");
+    const code = msg.includes("Not authorized") ? 403 : msg.includes("Missing auth token") ? 401 : 500;
+    return res.status(code).json({ ok: false, error: msg });
+  }
 });
 
 // Create payment intent (Stripe) - skeleton
@@ -113,7 +188,7 @@ app.post('/sendNotification', async (req, res) => {
 // When deployed as a Firebase Cloud Function the module is `require`d by
 // the Functions runtime and should not call `app.listen`.
 if (require.main === module) {
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
   });
@@ -246,4 +321,4 @@ app.post('/uploadBase64', async (req, res) => {
   }
 });
 
-// export const api = functions.https.onRequest(app);
+export const api = functions.https.onRequest(app);
